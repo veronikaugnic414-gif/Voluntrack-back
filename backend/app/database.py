@@ -22,3 +22,10 @@ if __name__ == "__main__":
         connection.close()
     except Exception as e:
         print(f"❌ Помилка: {e}")
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
