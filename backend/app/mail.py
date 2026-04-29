@@ -34,3 +34,17 @@ async def send_verification_email(email: str, token: str):
 
 def generate_verification_token() -> str:
     return str(uuid.uuid4())  # випадковий унікальний рядок
+
+
+async def send_reset_email(email: str, token: str):
+    link = f"http://localhost:8000/auth/reset-password?token={token}"
+
+    message = MessageSchema(
+        subject="Скидання пароля",
+        recipients=[email],
+        body=f"Для скидання пароля перейди за посиланням:\n\n{link}",
+        subtype="plain"
+    )
+
+    fm = FastMail(conf)
+    await fm.send_message(message)

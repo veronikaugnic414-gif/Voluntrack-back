@@ -19,3 +19,4 @@ class User(Base):
     password = Column(String, nullable=False)
     is_verified = Column(Boolean, default=False)
     verification_token = Column(String, nullable=True)
+    reset_token = Column(String, nullable=True)
