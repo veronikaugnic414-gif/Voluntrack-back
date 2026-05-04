@@ -4,7 +4,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
+from typing import Optional
 from app.database import get_db
 from app.models import User
 from app.security import hash_password, verify_password, create_access_token
@@ -14,8 +15,16 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 class RegisterSchema(BaseModel):
-    email: str
+    email: EmailStr
     password: str
+    role: str  # volunteer / organization / user
+    name: Optional[str] = None
+    location: Optional[str] = None
+    about: Optional[str] = None
+
+    def validate_role(self):
+        if self.role not in ["volunteer", "organization", "user"]:
+            raise ValueError("Невірна роль")
 
 
 class LoginSchema(BaseModel):
@@ -30,8 +39,18 @@ class ResetPasswordSchema(BaseModel):
     token: str
     new_password: str
 
+
 @router.post("/register")
 async def register(data: RegisterSchema, db: Session = Depends(get_db)):
+    # Перевірка ролі
+    if data.role not in ["volunteer", "organization", "user"]:
+        raise HTTPException(status_code=400, detail="Невірна роль")
+
+    # Перевірка пароля
+    if len(data.password) < 8:
+        raise HTTPException(status_code=400, detail="Пароль має бути мінімум 8 символів")
+
+    # Перевірка email
     existing = db.query(User).filter(User.email == data.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email вже зайнятий")
@@ -40,6 +59,10 @@ async def register(data: RegisterSchema, db: Session = Depends(get_db)):
     user = User(
         email=data.email,
         password=hash_password(data.password),
+        role=data.role,
+        name=data.name,
+        location=data.location,
+        about=data.about,
         verification_token=token
     )
     db.add(user)

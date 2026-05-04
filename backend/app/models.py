@@ -1,14 +1,7 @@
 from sqlalchemy import Column, Integer, String, Float, Boolean, Enum, Text, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from app.database import Base
-import enum
 from datetime import datetime
-
-#Три типи користувачів
-class UserRole(enum.Enum):
-    user = "user"                 # Звичайний користувач
-    volunteer = "volunteer"       # Волонтер
-    organization = "organization" # Організація
 
 #Таблиця Користувачів (Профілі та Ачівочки)
 class User(Base):
@@ -17,11 +10,15 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     password = Column(String, nullable=False)
+    role = Column(String, nullable=False)
     is_verified = Column(Boolean, default=False)
     verification_token = Column(String, nullable=True)
-    
+    reset_token = Column(String, nullable=True)
+    name = Column(String, nullable=True)
+    location = Column(String, nullable=True)
+    about = Column(String, nullable=True)
+
     # Нові поля для соцмережі
-    role = Column(Enum(UserRole), default=UserRole.user)
     bio = Column(Text, nullable=True) # Опис профілю
     points = Column(Integer, default=0) # Ачівочки та рейтинг!
 
