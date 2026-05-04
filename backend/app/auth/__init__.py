@@ -5,10 +5,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from database import get_db
-from models import User
-from security import hash_password, verify_password, create_access_token
-from mail import send_verification_email, send_reset_email, generate_verification_token
+from app.database import get_db
+from app.models import User
+from app.security import hash_password, verify_password, create_access_token
+from app.mail import send_verification_email, send_reset_email, generate_verification_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
