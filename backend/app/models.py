@@ -20,6 +20,7 @@ class User(Base):
 
     # Нові поля для соцмережі
     bio = Column(Text, nullable=True) # Опис профілю
+    avatar_url = Column(String, nullable=True)
     points = Column(Integer, default=0) # Ачівочки та рейтинг!
 
     # Зв'язки з іншими таблицями (що цей юзер створив)
@@ -44,6 +45,12 @@ class Post(Base):
     
     # Коментарі під цим постом
     comments = relationship("Comment", back_populates="post")
+    # Нові поля з дизайну Figma
+    cover_image_url = Column(String, nullable=True) # Обкладинка збору
+    deadline = Column(DateTime, nullable=True) # Дата завершення "15 травня"
+    status = Column(String, default="active") # Активний чи закритий
+    likes_count = Column(Integer, default=0)
+    comments_count = Column(Integer, default=0)
 
 # 4. Таблиця Коментарів (під постами)
 class Comment(Base):

@@ -1,8 +1,10 @@
+import secrets
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional
@@ -55,7 +57,7 @@ async def register(data: RegisterSchema, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Email вже зайнятий")
 
-    token = generate_verification_token()
+    token = secrets.token_urlsafe(32)
     user = User(
         email=data.email,
         password=hash_password(data.password),
@@ -122,13 +124,62 @@ def reset_password_page(token: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Невірний токен")
     return {"message": "Токен дійсний", "token": token}
 
-@router.get("/verify/{token}")
+@router.get("/verify/{token}", response_class=HTMLResponse)
 def verify_email(token: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.verification_token == token).first()
+    
+    # --- ДИЗАЙН ДЛЯ ПОМИЛКИ (якщо токен невірний) ---
     if not user:
-        raise HTTPException(status_code=404, detail="Невірний токен")
+        error_html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Помилка - Voluntrack</title>
+            <style>
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f9f9f9; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                .card { background-color: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); text-align: center; max-width: 400px; border-top: 5px solid #e74c3c; }
+                h1 { color: #e74c3c; margin-top: 0; }
+                p { color: #555; line-height: 1.5; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h1>Ой, помилка 😔</h1>
+                <p>Цей токен невірний або час його дії минув. Можливо, ви вже підтвердили свою пошту раніше.</p>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=error_html, status_code=400)
 
+    # --- ЛОГІКА: Оновлюємо статус юзера в базі ---
     user.is_verified = True
     user.verification_token = None
     db.commit()
-    return {"message": "Email підтверджено, можеш увійти"}
+    
+    # --- ДИЗАЙН ДЛЯ УСПІХУ ---
+    success_html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Успіх! - Voluntrack</title>
+        <style>
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f9f9f9; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+            .card { background-color: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); text-align: center; max-width: 400px; border-top: 5px solid #4CAF50; }
+            h1 { color: #2ecc71; margin-top: 0; }
+            p { color: #555; line-height: 1.5; margin-bottom: 25px; }
+            .btn { background-color: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; transition: background-color 0.3s; display: inline-block; }
+            .btn:hover { background-color: #45a049; }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h1>Email підтверджено! 🎉</h1>
+            <p>Вітаємо у Voluntrack! Ваша пошта успішно підтверджена. Тепер ви можете закрити цю сторінку та увійти у свій акаунт.</p>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=success_html)

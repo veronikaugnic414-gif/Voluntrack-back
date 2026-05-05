@@ -1,25 +1,25 @@
-from passlib.context import CryptContext
-from jose import jwt, JWTError
+import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-import os
+from jose import jwt, JWTError
+import bcrypt  # Тепер використовуємо чистий bcrypt!
+
 load_dotenv()
 
-
-
-# Хешування паролів
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 # JWT налаштування
-SECRET_KEY = os.getenv("SECRET_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-key-for-dev")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60  # час сесії — 1 година
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    # Генеруємо сіль і хешуємо пароль напряму
+    salt = bcrypt.gensalt()
+    hashed_bytes = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed_bytes.decode('utf-8')
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    # Перевіряємо пароль
+    return bcrypt.checkpw(plain.encode('utf-8'), hashed.encode('utf-8'))
 
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
