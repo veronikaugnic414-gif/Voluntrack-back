@@ -3,6 +3,9 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.security import decode_access_token
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
@@ -12,6 +15,24 @@ from app.database import get_db
 from app.models import User
 from app.security import hash_password, verify_password, create_access_token
 from app.mail import send_verification_email, send_reset_email, generate_verification_token
+from app.schemas import UserUpdate, UserResponse
+
+bearer_scheme = HTTPBearer()
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme), db: Session = Depends(get_db)):
+    token = credentials.credentials
+    email = decode_access_token(token) # Розшифровуємо токен
+    
+    if not email:
+        raise HTTPException(status_code=401, detail="Недійсний або прострочений токен")
+        
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Користувача не знайдено")
+        
+    return user
+
+
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -183,3 +204,37 @@ def verify_email(token: str, db: Session = Depends(get_db)):
     </html>
     """
     return HTMLResponse(content=success_html)
+
+
+@router.get("/me")
+def get_profile(current_user: User = Depends(get_current_user)):
+    # Завдяки Depends(get_current_user), сюди потрапить тільки той, хто дав правильний токен!
+    return {
+        "email": current_user.email,
+        "name": current_user.name,
+        "role": current_user.role,
+        "location": current_user.location,
+        "about": current_user.about,
+        "is_trusted": current_user.is_trusted  # Віддаємо статус галочки на фронтенд
+    }
+
+
+@router.patch("/me", response_model=UserResponse)
+def update_profile(
+    profile_data: UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user) # 🔒 Оновлювати можна тільки СВІЙ профіль
+):
+    # Оновлюємо тільки ті поля, які юзер передав у запиті
+    if profile_data.name is not None:
+        current_user.name = profile_data.name
+    if profile_data.location is not None:
+        current_user.location = profile_data.location
+    if profile_data.about is not None:
+        current_user.about = profile_data.about
+    if profile_data.avatar_url is not None:
+        current_user.avatar_url = profile_data.avatar_url
+
+    db.commit()
+    db.refresh(current_user)
+    return current_user

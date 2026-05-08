@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, Enum, Text, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Float, Boolean, Enum, Text, ForeignKey, DateTime, JSON
 from sqlalchemy.orm import relationship
 from app.database import Base
 from datetime import datetime
@@ -7,11 +7,13 @@ from datetime import datetime
 class User(Base):
     __tablename__ = "users"
 
+    
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     password = Column(String, nullable=False)
     role = Column(String, nullable=False)
     is_verified = Column(Boolean, default=False)
+    is_trusted = Column(Boolean, default = False)
     verification_token = Column(String, nullable=True)
     reset_token = Column(String, nullable=True)
     name = Column(String, nullable=True)
@@ -34,10 +36,12 @@ class Post(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, index=True)
     description = Column(Text)
-    goal_amount = Column(Float, nullable=True) # Якщо це збір - тут сума. Якщо просто допис - тут пусто
+    goal_amount = Column(Float, nullable=True) 
     current_raised = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
+    category = Column(String, nullable=True) # Сфера: військова, медицина, освіта тощо
+    location = Column(String, nullable=True) # Місто або область
 
     # Хто створив цей пост
     owner_id = Column(Integer, ForeignKey("users.id"))
@@ -45,12 +49,17 @@ class Post(Base):
     
     # Коментарі під цим постом
     comments = relationship("Comment", back_populates="post")
-    # Нові поля з дизайну Figma
-    cover_image_url = Column(String, nullable=True) # Обкладинка збору
-    deadline = Column(DateTime, nullable=True) # Дата завершення "15 травня"
-    status = Column(String, default="active") # Активний чи закритий
+
+    # Поля з дизайну Figma
+    cover_image_url = Column(String, nullable=True) 
+    deadline = Column(DateTime, nullable=True) 
+    status = Column(String, default="active") # active / closed
     likes_count = Column(Integer, default=0)
     comments_count = Column(Integer, default=0)
+
+    # --- НОВІ ПОЛЯ ДЛЯ ЗВІТНОСТІ ---
+    report_text = Column(Text, nullable=True)          # Текст звіту ("Ми все купили!")
+    report_media_urls = Column(JSON, nullable=True)    # Список посилань [фото1, відео1, документ.pdf]
 
 # 4. Таблиця Коментарів (під постами)
 class Comment(Base):
@@ -87,3 +96,5 @@ class Report(Base):
 
     reporter_id = Column(Integer, ForeignKey("users.id")) # Хто скаржиться
     reported_user_id = Column(Integer, ForeignKey("users.id")) # На кого скаржаться
+
+    # 3. Таблиця Постів (Стрічка дописів та зборів)
