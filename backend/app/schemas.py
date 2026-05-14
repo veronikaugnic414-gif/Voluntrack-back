@@ -107,3 +107,28 @@ class ComplaintResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# --- 6. Схеми для Чату ---
+class MessageResponse(BaseModel):
+    id: int
+    sender_id: int
+    receiver_id: int
+    text: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# --- 7. Схеми для Сповіщень ---
+class NotificationResponse(BaseModel):
+    id: int
+    user_id: int
+    type: str
+    message: str
+    is_read: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

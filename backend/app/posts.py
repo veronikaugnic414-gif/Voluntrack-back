@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
-from app.models import Post, User, Comment, Complaint
+from app.models import Post, User, Comment, Complaint, Notification
 from app.schemas import PostCreate, PostResponse, PostClose, CommentCreate, CommentResponse, ComplaintCreate, ComplaintResponse
 from app.auth import get_current_user 
 
@@ -160,6 +160,13 @@ def report_post(
         author_id=current_user.id
     )
     db.add(new_complaint)
+    
+    # 🌸Сповіщаємо автора збору
+    warning_msg = f"Увага! На ваш збір (ID: {post.id}) надійшла скарга. Адміністрація проводить перевірку ⚠️"
+    new_notif = Notification(user_id=post.author_id, type="warning", message=warning_msg)
+    db.add(new_notif)
+    # ----------------------------------
+
     db.commit()
     db.refresh(new_complaint)
     return new_complaint

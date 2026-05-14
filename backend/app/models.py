@@ -106,3 +106,15 @@ class Complaint(Base):
     author_id = Column(Integer, ForeignKey("users.id"), nullable=False) # Хто поскаржився
     created_at = Column(DateTime, default=datetime.utcnow)
     is_resolved = Column(Boolean, default=False) # Чи розібрався адмін з цією скаргою
+
+
+# Таблиця Сповіщень
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False) # Кому прийшло
+    type = Column(String, nullable=False)                             # Тип: "admin", "like", "system"
+    message = Column(String, nullable=False)                          # Текст: "Вам видано галочку!"
+    is_read = Column(Boolean, default=False)                          # Чи прочитано
+    created_at = Column(DateTime, default=datetime.utcnow)
