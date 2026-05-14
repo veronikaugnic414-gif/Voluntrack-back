@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
-from app.models import Post, User, Comment
-from app.schemas import PostCreate, PostResponse, PostClose, CommentCreate, CommentResponse
+from app.models import Post, User, Comment, Complaint
+from app.schemas import PostCreate, PostResponse, PostClose, CommentCreate, CommentResponse, ComplaintCreate, ComplaintResponse
 from app.auth import get_current_user 
 
 router = APIRouter(prefix="/posts", tags=["Збори (Posts)"])
@@ -139,3 +139,27 @@ def like_post(
     db.commit()
     db.refresh(post)
     return post
+
+
+
+# 6. Надіслати скаргу на збір
+@router.post("/{post_id}/complaints", response_model=ComplaintResponse)
+def report_post(
+    post_id: int, 
+    complaint_data: ComplaintCreate, 
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
+):
+    post = db.query(Post).filter(Post.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Збір не знайдено")
+
+    new_complaint = Complaint(
+        text=complaint_data.text,
+        post_id=post_id,
+        author_id=current_user.id
+    )
+    db.add(new_complaint)
+    db.commit()
+    db.refresh(new_complaint)
+    return new_complaint

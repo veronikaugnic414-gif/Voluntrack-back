@@ -5,6 +5,7 @@ from app.database import engine
 from app.models import Base
 from app import posts
 from app import auth
+from app import admin
 
 
 app = FastAPI()
@@ -22,6 +23,7 @@ app.add_middleware(
 Base.metadata.create_all(bind=engine)
 app.include_router(auth.router)
 app.include_router(posts.router)
+app.include_router(admin.router)
 
 @app.get("/")
 def root():

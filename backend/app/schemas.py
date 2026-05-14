@@ -8,12 +8,12 @@ class UserRole(str, Enum):
     user = "user"
     volunteer = "volunteer"
     organization = "organization"
+    admin = "admin"
 
 # --- 1. Схеми для Користувачів (Профілі) ---
 class UserBase(BaseModel):
     email: str
     role: UserRole = UserRole.user
-    bio: Optional[str] = None
     points: int = 0
     name: Optional[str] = None
     location: Optional[str] = None
@@ -22,7 +22,6 @@ class UserBase(BaseModel):
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
-    bio: Optional[str] = None
     location: Optional[str] = None
     about: Optional[str] = None
     avatar_url: Optional[str] = None
@@ -30,6 +29,8 @@ class UserUpdate(BaseModel):
 class UserResponse(UserBase):
     id: int
     is_verified: bool
+    is_trusted: bool  
+    is_active: bool 
 
     class Config:
         from_attributes = True
@@ -87,6 +88,22 @@ class CommentResponse(BaseModel):
     created_at: datetime
     post_id: int
     author_id: int
+
+    class Config:
+        from_attributes = True
+
+
+# --- 5. Схеми для Скарг (Адмінка) ---
+class ComplaintCreate(BaseModel):
+    text: str
+
+class ComplaintResponse(BaseModel):
+    id: int
+    text: str
+    post_id: Optional[int]
+    author_id: int
+    is_resolved: bool
+    created_at: datetime
 
     class Config:
         from_attributes = True

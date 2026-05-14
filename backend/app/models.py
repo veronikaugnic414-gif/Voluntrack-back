@@ -14,6 +14,7 @@ class User(Base):
     role = Column(String, nullable=False)
     is_verified = Column(Boolean, default=False)
     is_trusted = Column(Boolean, default = False)
+    is_active = Column(Boolean, default=True)
     verification_token = Column(String, nullable=True)
     reset_token = Column(String, nullable=True)
     name = Column(String, nullable=True)
@@ -21,7 +22,6 @@ class User(Base):
     about = Column(String, nullable=True)
 
     # Нові поля для соцмережі
-    bio = Column(Text, nullable=True) # Опис профілю
     avatar_url = Column(String, nullable=True)
     points = Column(Integer, default=0) # Ачівочки та рейтинг!
 
@@ -97,4 +97,12 @@ class Report(Base):
     reporter_id = Column(Integer, ForeignKey("users.id")) # Хто скаржиться
     reported_user_id = Column(Integer, ForeignKey("users.id")) # На кого скаржаться
 
-    # 3. Таблиця Постів (Стрічка дописів та зборів)
+class Complaint(Base):
+    __tablename__ = "complaints"
+
+    id = Column(Integer, primary_key=True, index=True)
+    text = Column(String, nullable=False) # Текст скарги (напр. "Це шахрай!")
+    post_id = Column(Integer, ForeignKey("posts.id"), nullable=True) # На який збір скаржаться
+    author_id = Column(Integer, ForeignKey("users.id"), nullable=False) # Хто поскаржився
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_resolved = Column(Boolean, default=False) # Чи розібрався адмін з цією скаргою

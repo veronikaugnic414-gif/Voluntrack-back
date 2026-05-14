@@ -12,7 +12,7 @@ engine = create_engine(
 # Налаштовуємо сесію
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# СУЧАСНИЙ СПОСІБ (SQLAlchemy 2.0+)
+
 Base = declarative_base()
 
 if __name__ == "__main__":
