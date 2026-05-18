@@ -8,13 +8,11 @@ from app import auth
 from app import admin
 from app import chat
 from app import notification
-
+import os
 
 app = FastAPI()
 
-origins = [
-    "http://localhost:3000"
-]
+origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
