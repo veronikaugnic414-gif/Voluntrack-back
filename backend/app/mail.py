@@ -5,17 +5,35 @@ import uuid
 
 load_dotenv()
 
-conf = ConnectionConfig(
-    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
-    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
-    MAIL_FROM=os.getenv("MAIL_FROM"),
-    MAIL_PORT=int(os.getenv("MAIL_PORT")),
-    MAIL_SERVER=os.getenv("MAIL_SERVER"),
-    MAIL_STARTTLS=True,
-    MAIL_SSL_TLS=False,
-    USE_CREDENTIALS=True,
-    VALIDATE_CERTS=False,
-)
+# Read mail config with safe defaults so the app doesn't crash on import
+# when env vars are missing (e.g. on first deploy before secrets are configured)
+MAIL_USERNAME = os.getenv("MAIL_USERNAME")
+MAIL_PASSWORD = os.getenv("MAIL_PASSWORD")
+MAIL_FROM = os.getenv("MAIL_FROM")
+MAIL_PORT_RAW = os.getenv("MAIL_PORT")
+MAIL_SERVER = os.getenv("MAIL_SERVER")
+
+# Mail is enabled only when all required env vars are present
+MAIL_ENABLED = bool(MAIL_USERNAME and MAIL_PASSWORD and MAIL_FROM and MAIL_PORT_RAW and MAIL_SERVER)
+
+# Backend URL for verification/reset links - falls back to localhost for dev
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+
+conf = None
+if MAIL_ENABLED:
+    conf = ConnectionConfig(
+        MAIL_USERNAME=MAIL_USERNAME,
+        MAIL_PASSWORD=MAIL_PASSWORD,
+        MAIL_FROM=MAIL_FROM,
+        MAIL_PORT=int(MAIL_PORT_RAW),
+        MAIL_SERVER=MAIL_SERVER,
+        MAIL_STARTTLS=True,
+        MAIL_SSL_TLS=False,
+        USE_CREDENTIALS=True,
+        VALIDATE_CERTS=False,
+    )
+else:
+    print("[MAIL] Email sending is DISABLED — env vars not configured")
 
 async def send_verification_email(email: str, token: str):
     # Змінна має називатися саме так, як у HTML нижче
