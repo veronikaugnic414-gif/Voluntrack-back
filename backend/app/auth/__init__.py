@@ -1,9 +1,3 @@
-import secrets
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.security import decode_access_token
 from fastapi import APIRouter, HTTPException, Depends
