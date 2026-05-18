@@ -2,8 +2,10 @@ fastapi
 uvicorn[standard]
 gunicorn
 sqlalchemy
-pydantic
-python-multipart
+pydantic[email]
 python-jose[cryptography]
 passlib[bcrypt]
+python-multipart
 websockets
+fastapi-mail
+python-dotenv
