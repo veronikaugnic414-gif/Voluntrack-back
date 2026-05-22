@@ -1,15 +1,27 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
+
 from app.database import get_db
 from app.models import Post, User, Comment, Complaint, Notification
 from app.schemas import PostCreate, PostResponse, PostClose, CommentCreate, CommentResponse, ComplaintCreate, ComplaintResponse
 from app.auth import get_current_user 
+from app.limiter import limiter # 🛡️ Імпортуємо наш захист від спаму
 
 router = APIRouter(prefix="/posts", tags=["Збори (Posts)"])
 
+# --- ДОПОМІЖНА ФУНКЦІЯ ДЛЯ ФОНОВОЇ ВІДПРАВКИ EMAIL ---
+def send_email_notification(email: str, message: str):
+    import time
+    time.sleep(2) # Імітація довгої відправки
+    print(f"📧 У ФОНІ: Відправлено лист на {email}. Текст: {message}")
+
+
+# 1. СТВОРЕННЯ ЗБОРУ (Додано ліміт: макс 3 збори на хвилину від одного юзера)
 @router.post("/", response_model=PostResponse)
+@limiter.limit("3/minute")
 def create_post(
+    request: Request, # ⬅️ Обов'язковий параметр для лімітера
     post: PostCreate, 
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
@@ -23,8 +35,8 @@ def create_post(
         goal_amount=post.goal_amount,
         deadline=post.deadline,
         cover_image_url=post.cover_image_url,
-        category=post.category, # Зберігаємо сферу
-        location=post.location, # Зберігаємо локацію
+        category=post.category,
+        location=post.location,
         owner_id=current_user.id
     )
     db.add(new_post)
@@ -33,9 +45,12 @@ def create_post(
     return new_post
 
 
-@router.get("/", response_model=List[PostResponse])
+# 2. ОТРИМАННЯ ЗБОРІВ З ПАГІНАЦІЄЮ ТА ФІЛЬТРАЦІЄЮ (Читання зазвичай не лімітують жорстко)
+@router.get("/")
 def get_posts(
     db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Номер сторінки"),
+    limit: int = Query(10, ge=1, le=50, description="Кількість записів на сторінку"),
     search: Optional[str] = Query(None, description="Пошук за назвою/описом"),
     status: Optional[str] = Query("active", description="Статус (active/closed)"),
     category: Optional[str] = Query(None, description="Сфера (військова, медицина тощо)"),
@@ -52,9 +67,24 @@ def get_posts(
     if location:
         query = query.filter(Post.location.ilike(f"%{location}%"))
 
-    return query.order_by(Post.created_at.desc()).all()
+    total_items = query.count()
+    offset = (page - 1) * limit
+    posts = query.order_by(Post.created_at.desc()).offset(offset).limit(limit).all()
+    total_pages = (total_items + limit - 1) // limit if limit > 0 else 1
+
+    return {
+        "metadata": {
+            "total_items": total_items,
+            "current_page": page,
+            "limit": limit,
+            "total_pages": total_pages,
+            "has_next_page": page < total_pages
+        },
+        "data": posts
+    }
 
 
+# 3. ЗАКРИТТЯ ЗБОРУ
 @router.patch("/{post_id}/close", response_model=PostResponse)
 def close_post(
     post_id: int, 
@@ -80,20 +110,20 @@ def close_post(
     return post
 
 
-
+# 4. ДОДАВАННЯ КОМЕНТАРЯ (Захист від флуду: макс 5 коментарів на хвилину)
 @router.post("/{post_id}/comments", response_model=CommentResponse)
+@limiter.limit("5/minute")
 def add_comment(
+    request: Request, # ⬅️ Передаємо запит лімітеру
     post_id: int, 
     comment: CommentCreate, 
     db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user) # 🔒 Токен обов'язковий!
+    current_user: User = Depends(get_current_user)
 ):
-    # 1. Перевіряємо, чи існує такий збір
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Збір не знайдено")
 
-    # 2. Створюємо новий коментар
     new_comment = Comment(
         text=comment.text,
         post_id=post_id,
@@ -101,7 +131,6 @@ def add_comment(
     )
     db.add(new_comment)
     
-    # 3. Гейміфікація! Збільшуємо лічильник коментарів у пості та даємо +1 бал юзеру
     post.comments_count += 1
     current_user.points += 1
     
@@ -110,43 +139,44 @@ def add_comment(
     return new_comment
 
 
-# 4. Отримання всіх коментарів під конкретним збором
+# 5. ОТРИМАННЯ КОМЕНТАРІВ
 @router.get("/{post_id}/comments", response_model=List[CommentResponse])
 def get_comments(post_id: int, db: Session = Depends(get_db)):
-    # Шукаємо збір
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Збір не знайдено")
     
-    # Віддаємо всі коментарі до нього (від найновіших до найстаріших)
     comments = db.query(Comment).filter(Comment.post_id == post_id).order_by(Comment.created_at.desc()).all()
     return comments
 
 
-# 5. Лайк збору (Підтримка)
+# 6. ЛАЙК ЗБОРУ (Захист від автоклікерів: макс 10 лайків на хвилину)
 @router.post("/{post_id}/like", response_model=PostResponse)
+@limiter.limit("10/minute")
 def like_post(
+    request: Request,
     post_id: int, 
     db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user) # 🔒 Ставити лайки можуть тільки авторизовані!
+    current_user: User = Depends(get_current_user)
 ):
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Збір не знайдено")
         
-    # Збільшуємо лічильник лайків на 1
     post.likes_count += 1
     db.commit()
     db.refresh(post)
     return post
 
 
-
-# 6. Надіслати скаргу на збір
+# 7. СКАРГА З ФОНОВОЮ ЗАДАЧЕЮ (Захист від масових скарг: макс 2 на хвилину)
 @router.post("/{post_id}/complaints", response_model=ComplaintResponse)
+@limiter.limit("2/minute")
 def report_post(
+    request: Request,
     post_id: int, 
     complaint_data: ComplaintCreate, 
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
@@ -161,11 +191,15 @@ def report_post(
     )
     db.add(new_complaint)
     
-    # 🌸Сповіщаємо автора збору
     warning_msg = f"Увага! На ваш збір (ID: {post.id}) надійшла скарга. Адміністрація проводить перевірку ⚠️"
-    new_notif = Notification(user_id=post.author_id, type="warning", message=warning_msg)
+    new_notif = Notification(user_id=post.owner_id, type="warning", message=warning_msg)
     db.add(new_notif)
-    # ----------------------------------
+    
+    background_tasks.add_task(
+        send_email_notification, 
+        "user@example.com", 
+        f"На ваш збір '{post.title}' надійшла скарга!"
+    )
 
     db.commit()
     db.refresh(new_complaint)

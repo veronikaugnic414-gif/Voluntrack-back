@@ -132,3 +132,4 @@ class NotificationResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
