@@ -52,9 +52,9 @@ class PostCreate(BaseModel):
 
 class PostResponse(PostBase):
     id: int
-    current_raised: float
+    raised_amount: float
     created_at: datetime
-    is_active: bool
+    status: bool
     owner_id: int
     
     # Нові поля з Figma

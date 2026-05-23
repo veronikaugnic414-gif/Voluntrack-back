@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.security import decode_access_token
 from fastapi import APIRouter, HTTPException, Depends
@@ -209,7 +211,7 @@ def get_profile(current_user: User = Depends(get_current_user)):
         "role": current_user.role,
         "location": current_user.location,
         "about": current_user.about,
-        "is_trusted": current_user.is_trusted  # Віддаємо статус галочки на фронтенд
+        "is_trusted": current_user.is_verified  # Віддаємо статус галочки на фронтенд
     }
 
 
