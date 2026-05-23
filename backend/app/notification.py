@@ -8,8 +8,8 @@ from app.auth import get_current_user
 
 router = APIRouter(prefix="/notifications", tags=["Сповіщення 🔔"])
 
-# 1. Отримати всі свої сповіщення
-@router.get("/me", response_model=List[NotificationResponse])
+# 1. Отримати всі свої сповіщення (Уніфіковано маршрут під /notifications/)
+@router.get("/", response_model=List[NotificationResponse])
 def get_my_notifications(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Віддаємо сповіщення від найновіших до найстаріших
     return db.query(Notification).filter(Notification.user_id == current_user.id).order_by(Notification.created_at.desc()).all()
@@ -18,8 +18,21 @@ def get_my_notifications(db: Session = Depends(get_db), current_user: User = Dep
 @router.patch("/{notif_id}/read", response_model=NotificationResponse)
 def mark_as_read(notif_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     notif = db.query(Notification).filter(Notification.id == notif_id, Notification.user_id == current_user.id).first()
-    if notif:
-        notif.is_read = True
-        db.commit()
-        db.refresh(notif)
+    if not notif:
+        raise HTTPException(status_code=404, detail="Сповіщення не знайдено")
+        
+    notif.is_read = True
+    db.commit()
+    db.refresh(notif)
     return notif
+
+# 💡 3. НОВИЙ ЕНДПОІНТ: Видалення сповіщення
+@router.delete("/{notif_id}")
+def delete_notification(notif_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    notif = db.query(Notification).filter(Notification.id == notif_id, Notification.user_id == current_user.id).first()
+    if not notif:
+        raise HTTPException(status_code=404, detail="Сповіщення не знайдено")
+        
+    db.delete(notif)
+    db.commit()
+    return {"message": "Сповіщення успішно видалено"}

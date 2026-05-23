@@ -1,41 +1,93 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from enum import Enum
 from datetime import datetime
 
-# Наші ролі
 class UserRole(str, Enum):
     user = "user"
     volunteer = "volunteer"
     organization = "organization"
     admin = "admin"
 
-# --- 1. Схеми для Користувачів (Профілі) ---
+class InstitutionType(str, Enum):
+    school = "Школа"
+    gymnasium = "Гімназія"
+    collegium = "Колегіум"
+    college = "Коледж"
+    vocational = "Училище"
+    technicum = "Технікум"
+    lyceum = "Ліцей"
+    university = "Університет"
+    institute = "Інститут"
+    academy = "Академія"
+
+class EducationBase(BaseModel):
+    institution: str
+    institution_type: InstitutionType 
+    specialty: Optional[str] = None
+    start_year: Optional[int] = None
+    end_year: Optional[int] = None
+    is_current: bool = False 
+
+class EducationResponse(EducationBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class DocumentBase(BaseModel):
+    title: str
+
+class DocumentResponse(DocumentBase):
+    id: int
+    file_url: str
+    user_id: int
+
+    class Config:
+        from_attributes = True
+
 class UserBase(BaseModel):
-    email: str
+    email: EmailStr
     role: UserRole = UserRole.user
     points: int = 0
     name: Optional[str] = None
+    surname: Optional[str] = None
     location: Optional[str] = None
+    specialization: Optional[str] = None 
     about: Optional[str] = None
     avatar_url: Optional[str] = None
+    age: Optional[int] = None
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
+    surname: Optional[str] = None
     location: Optional[str] = None
+    specialization: Optional[str] = None
     about: Optional[str] = None
     avatar_url: Optional[str] = None
+    age: Optional[int] = None
 
 class UserResponse(UserBase):
     id: int
     is_verified: bool
     is_trusted: bool  
     is_active: bool 
+    educations: List[EducationResponse] = []
+    documents: List[DocumentResponse] = []
 
     class Config:
         from_attributes = True
 
-# --- 2. Схеми для Постів (Стрічка і Збори) ---
+# Схема для передачі автора всередині поста
+class PostOwnerFields(BaseModel):
+    id: int
+    name: Optional[str] = None
+    surname: Optional[str] = None
+    role: str
+    avatar_url: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
 class PostBase(BaseModel):
     title: str
     description: str
@@ -50,35 +102,37 @@ class PostCreate(BaseModel):
     category: Optional[str] = None
     location: Optional[str] = None
 
+# 💡 НОВА СХЕМА: Спеціально для безпечного редагування постів через JSON
+class PostUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    goal_amount: Optional[float] = None
+    location: Optional[str] = None
+    deadline: Optional[datetime] = None
+
 class PostResponse(PostBase):
     id: int
     raised_amount: float
     created_at: datetime
-    status: bool
+    status: str = "active"
     owner_id: int
-    
-    # Нові поля з Figma
     cover_image_url: Optional[str] = None
     deadline: Optional[datetime] = None
-    status: str = "active"
     likes_count: int = 0
     comments_count: int = 0
     category: Optional[str] = None
     location: Optional[str] = None
-    
-    # НОВІ ПОЛЯ ДЛЯ ЗВІТНОСТІ
     report_text: Optional[str] = None
     report_media_urls: Optional[List[str]] = []
+    owner: Optional[PostOwnerFields] = None
 
     class Config:
         from_attributes = True
 
-# --- 3. Схема для закриття збору та додавання звіту ---
 class PostClose(BaseModel):
     report_text: str
     report_media_urls: Optional[List[str]] = []
 
-# --- 4. Схеми для Коментарів ---
 class CommentCreate(BaseModel):
     text: str
 
@@ -92,8 +146,6 @@ class CommentResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# --- 5. Схеми для Скарг (Адмінка) ---
 class ComplaintCreate(BaseModel):
     text: str
 
@@ -108,8 +160,6 @@ class ComplaintResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# --- 6. Схеми для Чату ---
 class MessageResponse(BaseModel):
     id: int
     sender_id: int
@@ -120,8 +170,6 @@ class MessageResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# --- 7. Схеми для Сповіщень ---
 class NotificationResponse(BaseModel):
     id: int
     user_id: int
@@ -132,4 +180,3 @@ class NotificationResponse(BaseModel):
 
     class Config:
         from_attributes = True
-

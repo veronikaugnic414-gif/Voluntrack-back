@@ -82,7 +82,7 @@ def generate_verification_token() -> str:
 
 
 async def send_reset_email(email: str, token: str):
-    link = f"http://localhost:8000/auth/reset-password?token={token}"
+    link = f"http://localhost:3000/#/reset-password?token={token}"
 
     # Створюємо красивий HTML-дизайн для відновлення пароля
     html_content = f"""
