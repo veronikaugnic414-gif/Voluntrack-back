@@ -5,19 +5,23 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy import func  
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 
 from app.database import get_db
-from app.models import User, Education, Document, Notification  # 💡 Імпортували модель сповіщень
+from app.models import User, Education, Document, Notification, Post, Subscription  
 from app.security import decode_access_token, hash_password, verify_password, create_access_token
 from app.mail import send_verification_email, send_reset_email, generate_verification_token
 from app.schemas import UserUpdate, UserResponse, EducationBase, EducationResponse, DocumentResponse
 
 bearer_scheme = HTTPBearer()
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme), db: Session = Depends(get_db)):
+def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme), db: Session = Depends(get_db)):
+    if not credentials:
+        return None
+        
     token = credentials.credentials
     email = decode_access_token(token)
     
@@ -86,7 +90,6 @@ async def register(data: RegisterSchema, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    # 💡 АВТОМАТИЧНЕ СТВОРЕННЯ ВІТАЛЬНОГО СПОВІЩЕННЯ ПРИ РЕЄСТРАЦІЇ
     welcome_notification = Notification(
         user_id=user.id,
         type="info",
@@ -209,9 +212,53 @@ def verify_email(token: str, db: Session = Depends(get_db)):
     return HTMLResponse(content=success_html)
 
 
-@router.get("/me", response_model=UserResponse)
-def get_profile(current_user: User = Depends(get_current_user)):
-    return current_user
+# 💡 ВИПРАВЛЕНО: Дані серіалізуються напряму без response_model обмежень для стабільності
+@router.get("/me")
+def get_profile(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    posts_count = db.query(Post).filter(Post.owner_id == current_user.id).count()
+    followers_count = db.query(Subscription).filter(Subscription.followed_id == current_user.id).count()
+    total_likes = db.query(func.sum(Post.likes_count)).filter(Post.owner_id == current_user.id).scalar() or 0
+
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "role": current_user.role,
+        "name": current_user.name,
+        "surname": current_user.surname,
+        "specialization": current_user.specialization,
+        "about": current_user.about,
+        "location": current_user.location,
+        "avatar_url": current_user.avatar_url,
+        "age": current_user.age,
+        "points": current_user.points,
+        "is_verified": current_user.is_verified,
+        "is_trusted": current_user.is_trusted,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+        "educations": [
+            {
+                "id": edu.id,
+                "institution": edu.institution,
+                "institution_type": edu.institution_type,
+                "specialty": edu.specialty,
+                "start_year": edu.start_year,
+                "end_year": edu.end_year,
+                "is_current": edu.is_current
+            } for edu in current_user.educations
+        ],
+        "documents": [
+            {
+                "id": doc.id,
+                "title": doc.title,
+                "file_url": doc.file_url,
+                "user_id": doc.user_id
+            } for doc in current_user.documents
+        ],
+        "stats": {
+            "posts_count": posts_count,
+            "followers_count": followers_count,
+            "total_likes": total_likes
+        }
+    }
 
 
 @router.patch("/me", response_model=UserResponse)
@@ -309,3 +356,68 @@ def delete_document(doc_id: int, db: Session = Depends(get_db), current_user: Us
     db.delete(doc)
     db.commit()
     return {"message": "Документ видалено"}
+
+
+# 💡 ОТРИМАННЯ ПУБЛІЧНОГО ПРОФІЛЮ ЗІ СТАТИСТИКОЮ ТА ДАТОЮ РЕЄСТРАЦІЇ
+@router.get("/users/{user_id}")
+def get_public_profile(user_id: int, db: Session = Depends(get_db), current_user: Optional[User] = Depends(get_current_user)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Користувача не знайдено")
+        
+    posts_count = db.query(Post).filter(Post.owner_id == user_id).count()
+    followers_count = db.query(Subscription).filter(Subscription.followed_id == user_id).count()
+    total_likes = db.query(func.sum(Post.likes_count)).filter(Post.owner_id == user_id).scalar() or 0
+
+    is_following = False
+    if current_user:
+        existing_sub = db.query(Subscription).filter(
+            Subscription.follower_id == current_user.id,
+            Subscription.followed_id == user_id
+        ).first()
+        is_following = existing_sub is not None
+
+    return {
+        "id": user.id,
+        "name": user.name,
+        "surname": user.surname,
+        "role": user.role,
+        "location": user.location,
+        "about": user.about,
+        "avatar_url": user.avatar_url,
+        "specialization": user.specialization,
+        "is_verified": user.is_verified,
+        "is_following": is_following,
+        "created_at": user.created_at.isoformat() if user.created_at else None,  
+        "stats": {
+            "posts_count": posts_count,
+            "followers_count": followers_count,
+            "total_likes": total_likes
+        }
+    }
+
+
+# 💡 КНОПКА ПІДПИСАТИСЯ / ВІДПИСАТИСЯ (TOGGLE)
+@router.post("/users/{user_id}/toggle-follow")
+def toggle_follow(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Ви не можете підписатися на самого себе")
+
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Користувача не знайдено")
+
+    existing_sub = db.query(Subscription).filter(
+        Subscription.follower_id == current_user.id,
+        Subscription.followed_id == user_id
+    ).first()
+
+    if existing_sub:
+        db.delete(existing_sub)
+        db.commit()
+        return {"message": "Відписано ✖️", "is_following": False}
+    else:
+        new_sub = Subscription(follower_id=current_user.id, followed_id=user_id)
+        db.add(new_sub)
+        db.commit()
+        return {"message": "Успішно підписано! 🖤", "is_following": True}

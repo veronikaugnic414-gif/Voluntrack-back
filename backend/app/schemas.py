@@ -45,6 +45,15 @@ class DocumentResponse(DocumentBase):
     class Config:
         from_attributes = True
 
+# 💡 НОВА СХЕМА: Для лічильників статистики у профілях (Instagram-style)
+class ProfileStatsSchema(BaseModel):
+    posts_count: int
+    followers_count: int
+    total_likes: int
+
+    class Config:
+        from_attributes = True
+
 class UserBase(BaseModel):
     email: EmailStr
     role: UserRole = UserRole.user
@@ -73,6 +82,9 @@ class UserResponse(UserBase):
     is_active: bool 
     educations: List[EducationResponse] = []
     documents: List[DocumentResponse] = []
+    # 🌟 ВИПРАВЛЕНО: Додано поля для відображення статистики та дати реєстрації у власному профілі
+    created_at: Optional[datetime] = None 
+    stats: Optional[ProfileStatsSchema] = None 
 
     class Config:
         from_attributes = True
@@ -102,7 +114,6 @@ class PostCreate(BaseModel):
     category: Optional[str] = None
     location: Optional[str] = None
 
-# 💡 НОВА СХЕМА: Спеціально для безпечного редагування постів через JSON
 class PostUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
@@ -125,6 +136,7 @@ class PostResponse(PostBase):
     report_text: Optional[str] = None
     report_media_urls: Optional[List[str]] = []
     owner: Optional[PostOwnerFields] = None
+    is_following: Optional[bool] = False # Динамічний прапорець підписки для стрічки
 
     class Config:
         from_attributes = True
@@ -136,12 +148,26 @@ class PostClose(BaseModel):
 class CommentCreate(BaseModel):
     text: str
 
+# 💡 НОВА СХЕМА: Для безпечної передачі автора коментаря на фронтенд
+class CommentAuthorSchema(BaseModel):
+    id: int
+    name: Optional[str] = None
+    surname: Optional[str] = None
+    role: str
+    avatar_url: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
 class CommentResponse(BaseModel):
     id: int
     text: str
     created_at: datetime
     post_id: int
     author_id: int
+    parent_id: Optional[int] = None # Поле ієрархії для дерева відповідей
+    # 🌟 ВИПРАВЛЕНО: Дозволяємо системі валідації пропускати вкладеного автора на фронтенд
+    author: Optional[CommentAuthorSchema] = None 
 
     class Config:
         from_attributes = True
@@ -163,6 +189,7 @@ class ComplaintResponse(BaseModel):
 class MessageResponse(BaseModel):
     id: int
     sender_id: int
+    running_id: Optional[int] = None # Сумісність для обробників
     receiver_id: int
     text: str
     created_at: datetime
@@ -177,6 +204,20 @@ class NotificationResponse(BaseModel):
     message: str
     is_read: bool
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+# 💡 НОВІ СХЕМИ: Для валідації та роботи зі збереженими дописами
+class SavedPostCreate(BaseModel):
+    post_id: int
+
+class SavedPostResponse(BaseModel):
+    id: int
+    user_id: int
+    post_id: int
+    created_at: datetime
+    post: Optional[PostResponse] = None
 
     class Config:
         from_attributes = True

@@ -7,7 +7,7 @@ from datetime import datetime
 class Education(Base):
     __tablename__ = "educations"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     institution = Column(String)
     institution_type = Column(String)  
     specialty = Column(String, nullable=True)
@@ -17,7 +17,6 @@ class Education(Base):
     
     user = relationship("User", back_populates="educations")
 
-# Модель для документів організацій
 class Document(Base):
     __tablename__ = "documents"
     id = Column(Integer, primary_key=True, index=True)
@@ -27,7 +26,6 @@ class Document(Base):
 
     user = relationship("User", back_populates="documents")
 
-# 💡 НОВА МОДЕЛЬ: Захист від накрутки лайків
 class Like(Base):
     __tablename__ = "likes"
 
@@ -38,8 +36,31 @@ class Like(Base):
     user = relationship("User", back_populates="likes")
     post = relationship("Post", back_populates="likes_relationship")
 
-    # Обмеження на рівні бази даних: один юзер — один лайк для конкретного поста
     __table_args__ = (UniqueConstraint("user_id", "post_id", name="unique_user_post_like"),)
+
+# 💡 НОВА МОДЕЛЬ: Таблиця збережених дописів (Закладки)
+class SavedPost(Base):
+    __tablename__ = "saved_posts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="saved_posts")
+    post = relationship("Post", back_populates="saved_by_users")
+
+    __table_args__ = (UniqueConstraint("user_id", "post_id", name="unique_user_saved_post"),)
+
+# Таблиця підписок (Followers)
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    follower_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    followed_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    __table_args__ = (UniqueConstraint("follower_id", "followed_id", name="unique_follower_followed"),)
 
 class User(Base):
     __tablename__ = "users"
@@ -65,11 +86,20 @@ class User(Base):
     verification_token = Column(String, nullable=True)
     reset_token = Column(String, nullable=True)
     
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
     posts = relationship("Post", back_populates="owner", cascade="all, delete-orphan")
     comments = relationship("Comment", back_populates="author", cascade="all, delete-orphan")
     educations = relationship("Education", back_populates="user", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")
-    likes = relationship("Like", back_populates="user", cascade="all, delete-orphan") # 💡 Додано зв'язок для лайків користувача
+    likes = relationship("Like", back_populates="user", cascade="all, delete-orphan")
+    
+    # 💡 Зв'язок для збережених постів користувача
+    saved_posts = relationship("SavedPost", back_populates="user", cascade="all, delete-orphan")
+    
+    # Зв'язки для підписок
+    followers = relationship("Subscription", foreign_keys=[Subscription.followed_id], cascade="all, delete-orphan")
+    following = relationship("Subscription", foreign_keys=[Subscription.follower_id], cascade="all, delete-orphan")
 
 class Post(Base):
     __tablename__ = "posts"
@@ -98,10 +128,12 @@ class Post(Base):
     owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     owner = relationship("User", back_populates="posts")
     
-    # Контроль каскадів: якщо пост видалено — чистимо коменти, скарги та лайки під ним
     comments = relationship("Comment", back_populates="post", cascade="all, delete-orphan")
     complaints = relationship("Complaint", back_populates="post", cascade="all, delete-orphan")
     likes_relationship = relationship("Like", back_populates="post", cascade="all, delete-orphan")
+    
+    # 💡 Зв'язок, щоб бачити, які користувачі зберегли цей допис
+    saved_by_users = relationship("SavedPost", back_populates="post", cascade="all, delete-orphan")
 
 class Comment(Base):
     __tablename__ = "comments"
@@ -112,9 +144,23 @@ class Comment(Base):
 
     post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"))
     author_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    
+    parent_id = Column(Integer, ForeignKey("comments.id", ondelete="CASCADE"), nullable=True)
 
     post = relationship("Post", back_populates="comments")
     author = relationship("User", back_populates="comments")
+    
+    replies = relationship(
+        "Comment", 
+        back_populates="parent", 
+        cascade="all, delete-orphan"
+    )
+    
+    parent = relationship(
+        "Comment", 
+        back_populates="replies", 
+        remote_side=[id]
+    )
 
 class Complaint(Base):
     __tablename__ = "complaints"

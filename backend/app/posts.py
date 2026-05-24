@@ -4,10 +4,11 @@ import secrets
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, or_
 from typing import List, Optional
 
 from app.database import get_db
-from app.models import Post, User, Comment, Complaint, Notification, Like  # 💡 Додано модель Like
+from app.models import Post, User, Comment, Complaint, Notification, Like, Subscription  
 from app.schemas import PostResponse, CommentCreate, CommentResponse, ComplaintCreate, ComplaintResponse, PostUpdate
 from app.auth import get_current_user 
 from app.limiter import limiter 
@@ -65,13 +66,14 @@ async def create_post(
     return new_post
 
 
-# 2. ОТРИМАННЯ ЗБОРІВ З ФІЛЬТРАЦІЄЮ ТА ПОШУКОМ
+# 2. ОТРИМАННЯ ЗБОРІВ З ФІЛЬТРАЦІЄЮ ТА ДИНАМІЧНИМ СТАТУСОМ ПІДПИСКИ
 @router.get("/", response_model=List[PostResponse])
 def get_posts(
     db: Session = Depends(get_db),
     search: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
-    location: Optional[str] = Query(None)
+    location: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_current_user)
 ):
     query = db.query(Post).options(joinedload(Post.owner)).filter(Post.status == "active")
     
@@ -82,7 +84,17 @@ def get_posts(
     if location:
         query = query.filter(Post.location.ilike(f"%{location}%"))
 
-    return query.order_by(Post.created_at.desc()).all()
+    posts = query.order_by(Post.created_at.desc()).all()
+
+    # ДИНАМІЧНА ПЕРЕВІРКА ПІДПИСКИ ДЛЯ КОЖНОГО ПОСТА
+    if current_user:
+        followed_ids = {
+            sub.followed_id for sub in db.query(Subscription).filter(Subscription.follower_id == current_user.id).all()
+        }
+        for post in posts:
+            post.is_following = post.owner_id in followed_ids
+
+    return posts
 
 
 # 3. ОТРИМАННЯ ОДНОГО ЗБОРУ ЗА ID
@@ -94,7 +106,7 @@ def get_single_post(post_id: int, db: Session = Depends(get_db)):
     return post
 
 
-# 4. РЕДАГУВАННЯ ЗБОРУ (Через чисту схему PostUpdate)
+# 4. РЕДАГУВАННЯ ЗБОРУ
 @router.patch("/{post_id}", response_model=PostResponse)
 def edit_post(
     post_id: int,
@@ -162,13 +174,14 @@ def delete_post(
     return {"message": "Збір успішно видалено"}
 
 
-# 7. ДОДАВАННЯ КОМЕНТАРЯ
+# 7. ДОДАВАННЯ КОМЕНТАРЯ АБО ВІДПОВІДІ (З підтримкою parent_id)
 @router.post("/{post_id}/comments", response_model=CommentResponse)
 @limiter.limit("5/minute")
 def add_comment(
     request: Request, 
     post_id: int, 
     comment: CommentCreate, 
+    parent_id: Optional[int] = Query(None), 
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
@@ -179,7 +192,8 @@ def add_comment(
     new_comment = Comment(
         text=comment.text,
         post_id=post_id,
-        author_id=current_user.id
+        author_id=current_user.id,
+        parent_id=parent_id 
     )
     db.add(new_comment)
     
@@ -191,17 +205,18 @@ def add_comment(
     return new_comment
 
 
-# 8. ОТРИМАННЯ КОМЕНТАРІВ
+# 8. ОТРИМАННЯ КОМЕНТАРІВ ТА ВІДПОВІДЕЙ (З підвантаженням об'єкта автора)
 @router.get("/{post_id}/comments", response_model=List[CommentResponse])
 def get_comments(post_id: int, db: Session = Depends(get_db)):
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Збір не знайдено")
     
-    return db.query(Comment).filter(Comment.post_id == post_id).order_by(Comment.created_at.desc()).all()
+    # 💡 ВИПРАВЛЕНО: Додано joinedload(Comment.author) для рендерингу імен та аватарок у дереві відповідей
+    return db.query(Comment).options(joinedload(Comment.author)).filter(Comment.post_id == post_id).order_by(Comment.created_at.asc()).all()
 
 
-# 9. ЛАЙК ЗБОРУ (💡 Захищено від накрутки — працює як перемикач)
+# 9. ЛАЙК ЗБОРУ (Антивірус проти накруток)
 @router.post("/{post_id}/like", response_model=PostResponse)
 @limiter.limit("10/minute")
 def like_post(
@@ -214,16 +229,13 @@ def like_post(
     if not post:
         raise HTTPException(status_code=404, detail="Збір не знайдено")
         
-    # Шукаємо, чи є вже лайк від цього користувача під цим постом
     existing_like = db.query(Like).filter(Like.user_id == current_user.id, Like.post_id == post_id).first()
 
     if existing_like:
-        # Якщо лайк вже є — видаляємо його (дизлайк)
         db.delete(existing_like)
         if post.likes_count > 0:
             post.likes_count -= 1
     else:
-        # Якщо лайка немає — створюємо запис в базі
         new_like = Like(user_id=current_user.id, post_id=post_id)
         db.add(new_like)
         post.likes_count += 1
