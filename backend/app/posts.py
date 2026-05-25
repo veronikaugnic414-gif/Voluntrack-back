@@ -189,6 +189,7 @@ def close_post(
     post.status = "closed"
     post.report_text = report_text
     
+    # 💡 ВИПРАВЛЕНО: Записуємо файл у наявну JSON-колонку report_media_urls як масив
     if file:
         UPLOAD_DIR = "static/reports"
         os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -198,7 +199,9 @@ def close_post(
         
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        post.report_file_url = f"http://127.0.0.1:8000/{file_path}"
+        
+        # Записуємо згенероване посилання як єдиний елемент масиву
+        post.report_media_urls = [f"http://127.0.0.1:8000/{file_path}"]
 
     subscribers = db.query(Subscription).filter(Subscription.followed_id == current_user.id).all()
     
@@ -206,7 +209,6 @@ def close_post(
     notification_msg = f"Збір '{post.title}' від {author_name} успішно закрито! Опубліковано офіційний звіт. 📑"
     
     for sub in subscribers:
-        # 💡 ВИПРАВЛЕНО: Видалили post_id звідси, щоб база даних більше не сварилася на відсутність колонки
         new_notification = Notification(
             user_id=sub.follower_id,
             type="report",
@@ -224,6 +226,7 @@ def close_post(
     db.commit()
     db.refresh(post)
     return post
+
 
 
 # 6. ВИДАЛЕННЯ ЗБОРУ
