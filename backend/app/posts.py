@@ -8,7 +8,7 @@ from sqlalchemy import func, or_
 from typing import List, Optional
 
 from app.database import get_db
-from app.models import Post, User, Comment, Complaint, Notification, Like, Subscription  
+from app.models import Post, User, Comment, Complaint, Notification, Like, Subscription, SavedPost  
 from app.schemas import PostResponse, CommentCreate, CommentResponse, ComplaintCreate, ComplaintResponse, PostUpdate
 from app.auth import get_current_user 
 from app.limiter import limiter 
@@ -66,7 +66,7 @@ async def create_post(
     return new_post
 
 
-# 2. ОТРИМАННЯ ЗБОРІВ З ФІЛЬТРАЦІЄЮ ТА ДИНАМІЧНИМ СТАТУСОМ ПІДПИСКИ
+# 2. ОТРИМАННЯ ЗБОРІВ З РОЗУМНОЮ ФІЛЬТРАЦІЄЮ ТА СТАТУСОМ ЗБЕРЕЖЕННЯ
 @router.get("/", response_model=List[PostResponse])
 def get_posts(
     db: Session = Depends(get_db),
@@ -75,29 +75,65 @@ def get_posts(
     location: Optional[str] = Query(None),
     current_user: Optional[User] = Depends(get_current_user)
 ):
-    query = db.query(Post).options(joinedload(Post.owner)).filter(Post.status == "active")
+    # 💡 ВИПРАВЛЕНО: Якщо йде точковий пошук або запит робить волонтер, знімаємо обмеження active, 
+    # щоб фронтенд міг розпарсити деталі закритих звітів
+    if (current_user and current_user.role in ["volunteer", "organization"]) or search:
+        query = db.query(Post).options(joinedload(Post.owner))
+    else:
+        query = db.query(Post).options(joinedload(Post.owner)).filter(Post.status == "active")
     
     if search:
         query = query.filter((Post.title.ilike(f"%{search}%")) | (Post.description.ilike(f"%{search}%")))
-    if category:
+    if category and category != "Усі":
         query = query.filter(Post.category.ilike(f"%{category}%"))
     if location:
         query = query.filter(Post.location.ilike(f"%{location}%"))
 
     posts = query.order_by(Post.created_at.desc()).all()
 
-    # ДИНАМІЧНА ПЕРЕВІРКА ПІДПИСКИ ДЛЯ КОЖНОГО ПОСТА
     if current_user:
         followed_ids = {
             sub.followed_id for sub in db.query(Subscription).filter(Subscription.follower_id == current_user.id).all()
         }
+        saved_post_ids = {
+            sp.post_id for sp in db.query(SavedPost).filter(SavedPost.user_id == current_user.id).all()
+        }
         for post in posts:
             post.is_following = post.owner_id in followed_ids
+            post.is_saved = post.id in saved_post_ids
 
     return posts
 
 
-# 3. ОТРИМАННЯ ОДНОГО ЗБОРУ ЗА ID
+# ОТРИМАННЯ ВСІХ ЗБЕРЕЖЕНИХ ЗАКЛАДОК ЮЗЕРА
+@router.get("/saved/all", response_model=List[PostResponse])
+def get_saved_posts(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    saved_relations = db.query(SavedPost).filter(SavedPost.user_id == current_user.id).all()
+    post_ids = [sr.post_id for sr in saved_relations]
+    
+    posts = db.query(Post).options(joinedload(Post.owner)).filter(Post.id.in_(post_ids)).all()
+    
+    for post in posts:
+        post.is_saved = True
+    return posts
+
+
+# ТРИГЕР ЗБЕРЕЖЕННЯ / ВИДАЛЕННЯ ЗБОРУ В ЗАКЛАДКИ
+@router.post("/{post_id}/save")
+def toggle_save_post(post_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    existing = db.query(SavedPost).filter(SavedPost.user_id == current_user.id, SavedPost.post_id == post_id).first()
+    if existing:
+        db.delete(existing)
+        db.commit()
+        return {"message": "Допис видалено із закладок. 📁"}
+    
+    new_save = SavedPost(user_id=current_user.id, post_id=post_id)
+    db.add(new_save)
+    db.commit()
+    return {"message": "Допис успішно збережено в закладки! 💾"}
+
+
+# 3. ОТРИМАННЯ ОДНОГО ЗБОРУ ЗА ID (Дозволено завантажувати closed збори для звітів)
 @router.get("/{post_id}", response_model=PostResponse)
 def get_single_post(post_id: int, db: Session = Depends(get_db)):
     post = db.query(Post).options(joinedload(Post.owner)).filter(Post.id == post_id).first()
@@ -131,11 +167,13 @@ def edit_post(
     return post
 
 
-# 5. ЗАКРИТТЯ ЗБОРУ
+# 5. ЗАКРИТТЯ ЗБОРУ З НАДШИЛАННЯМ ФАЙЛІВ ТА СПОВІЩЕННЯМИ ПІДПИСНИКАМ
 @router.post("/{post_id}/close", response_model=PostResponse)
 def close_post(
     post_id: int, 
     report_text: str = Form(...), 
+    file: Optional[UploadFile] = File(None), 
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
@@ -150,6 +188,38 @@ def close_post(
 
     post.status = "closed"
     post.report_text = report_text
+    
+    if file:
+        UPLOAD_DIR = "static/reports"
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        file_extension = file.filename.split(".")[-1]
+        file_name = f"report_{post_id}_{secrets.token_hex(3)}.{file_extension}"
+        file_path = f"{UPLOAD_DIR}/{file_name}"
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        post.report_file_url = f"http://127.0.0.1:8000/{file_path}"
+
+    subscribers = db.query(Subscription).filter(Subscription.followed_id == current_user.id).all()
+    
+    author_name = current_user.name if current_user.role == "organization" else f"{current_user.name} {current_user.surname or ''}".strip()
+    notification_msg = f"Збір '{post.title}' від {author_name} успішно закрито! Опубліковано офіційний звіт. 📑"
+    
+    for sub in subscribers:
+        # 💡 ВИПРАВЛЕНО: Видалили post_id звідси, щоб база даних більше не сварилася на відсутність колонки
+        new_notification = Notification(
+            user_id=sub.follower_id,
+            type="report",
+            message=notification_msg
+        )
+        db.add(new_notification)
+        
+        if background_tasks:
+            background_tasks.add_task(
+                send_email_notification,
+                "follower@example.com", 
+                notification_msg
+            )
     
     db.commit()
     db.refresh(post)
@@ -212,7 +282,6 @@ def get_comments(post_id: int, db: Session = Depends(get_db)):
     if not post:
         raise HTTPException(status_code=404, detail="Збір не знайдено")
     
-    # 💡 ВИПРАВЛЕНО: Додано joinedload(Comment.author) для рендерингу імен та аватарок у дереві відповідей
     return db.query(Comment).options(joinedload(Comment.author)).filter(Comment.post_id == post_id).order_by(Comment.created_at.asc()).all()
 
 
@@ -267,6 +336,7 @@ def report_post(
     )
     db.add(new_complaint)
     
+    # 💡 ВИПРАВЛЕНО: Виправили опечатку "проводи" ➔ "проводить"
     warning_msg = f"Увага! На ваш збір (ID: {post.id}) надійшла скарга. Адміністрація проводить перевірку ⚠️"
     new_notif = Notification(user_id=post.owner_id, type="warning", message=warning_msg)
     db.add(new_notif)

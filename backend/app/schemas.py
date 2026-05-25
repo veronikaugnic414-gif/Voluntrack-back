@@ -45,7 +45,7 @@ class DocumentResponse(DocumentBase):
     class Config:
         from_attributes = True
 
-# 💡 НОВА СХЕМА: Для лічильників статистики у профілях (Instagram-style)
+# СХЕМА: Для лічильників статистики у профілях (Instagram-style)
 class ProfileStatsSchema(BaseModel):
     posts_count: int
     followers_count: int
@@ -82,7 +82,6 @@ class UserResponse(UserBase):
     is_active: bool 
     educations: List[EducationResponse] = []
     documents: List[DocumentResponse] = []
-    # 🌟 ВИПРАВЛЕНО: Додано поля для відображення статистики та дати реєстрації у власному профілі
     created_at: Optional[datetime] = None 
     stats: Optional[ProfileStatsSchema] = None 
 
@@ -135,6 +134,8 @@ class PostResponse(PostBase):
     location: Optional[str] = None
     report_text: Optional[str] = None
     report_media_urls: Optional[List[str]] = []
+    # 💡 ВИПРАВЛЕНО: Додано валідацію для посилання на завантажений фото/відео звіт
+    report_file_url: Optional[str] = None  
     owner: Optional[PostOwnerFields] = None
     is_following: Optional[bool] = False # Динамічний прапорець підписки для стрічки
 
@@ -148,7 +149,7 @@ class PostClose(BaseModel):
 class CommentCreate(BaseModel):
     text: str
 
-# 💡 НОВА СХЕМА: Для безпечної передачі автора коментаря на фронтенд
+# СХЕМА: Для безпечної передачі автора коментаря на фронтенд
 class CommentAuthorSchema(BaseModel):
     id: int
     name: Optional[str] = None
@@ -166,7 +167,6 @@ class CommentResponse(BaseModel):
     post_id: int
     author_id: int
     parent_id: Optional[int] = None # Поле ієрархії для дерева відповідей
-    # 🌟 ВИПРАВЛЕНО: Дозволяємо системі валідації пропускати вкладеного автора на фронтенд
     author: Optional[CommentAuthorSchema] = None 
 
     class Config:
@@ -208,7 +208,7 @@ class NotificationResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# 💡 НОВІ СХЕМИ: Для валідації та роботи зі збереженими дописами
+# СХЕМИ: Для валідації та роботи зі збереженими дописами
 class SavedPostCreate(BaseModel):
     post_id: int
 

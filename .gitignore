@@ -189,3 +189,5 @@ voluntrack.db
 backend/static/avatars/*
 backend/static/posts/*
 backend/static/documents/*
+
+*.pyc
