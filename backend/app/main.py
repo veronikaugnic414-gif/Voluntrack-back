@@ -16,8 +16,10 @@ app = FastAPI()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Гарантуємо створення всіх необхідних папок для завантаження медіа
 os.makedirs("static/uploads", exist_ok=True)
 os.makedirs("static/avatars", exist_ok=True)
+os.makedirs("static/reports", exist_ok=True) # 💡 Додано для залізобетонної роботи звітів кампаній
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")

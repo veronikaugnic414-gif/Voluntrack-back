@@ -6,7 +6,7 @@ import json
 from contextlib import contextmanager
 
 from app.database import get_db, SessionLocal
-from app.models import Message, User, Complaint # 💡 Додали Complaint для маркування блокувань
+from app.models import Message, User, Complaint 
 from app.schemas import MessageResponse
 from app.auth import get_current_user
 from app.security import decode_access_token
@@ -14,16 +14,15 @@ from app.security import decode_access_token
 router = APIRouter(tags=["Чат (WebSockets та Історія)"])
 
 
-# 💡 НОВИЙ ЕНДПОІНТ: БЛОКУВАННЯ / РОЗБЛОКУВАННЯ КОРИСТУВАЧА (Без міграцій БД)
+# БЛОКУВАННЯ / РОЗБЛОКУВАННЯ КОРИСТУВАЧА
 @router.post("/chat/block/{other_user_id}")
 def toggle_block_user(other_user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.id == other_user_id:
         raise HTTPException(status_code=400, detail="Ви не можете заблокувати самого себе")
         
-    # Шукаємо, чи є вже активне блокування
     existing_block = db.query(Complaint).filter(
         Complaint.author_id == current_user.id,
-        Complaint.post_id == None, # Маркер того, що це не скарга на пост, а бан юзера
+        Complaint.post_id == None, 
         Complaint.text == f"[BLOCKED] user_id:{other_user_id}"
     ).first()
 
@@ -32,19 +31,18 @@ def toggle_block_user(other_user_id: int, db: Session = Depends(get_db), current
         db.commit()
         return {"status": "unblocked", "message": "Користувача успішно розблоковано! ✅"}
         
-    # Якщо блокування немає — створюємо його
     new_block = Complaint(
         text=f"[BLOCKED] user_id:{other_user_id}",
         post_id=None,
         author_id=current_user.id,
-        is_resolved=True # Помічаємо як технічний запис
+        is_resolved=True 
     )
     db.add(new_block)
     db.commit()
     return {"status": "blocked", "message": "Користувача заблоковано. Листування призупинено. 🚫"}
 
 
-# 1. ENDPOINT: СПИСОК АКТИВНИХ ДІАЛОГІВ ДЛЯ СТОРІНКИ CHAT.JS
+# 1. ENDPOINT: СПИСОК АКТИВНИХ ДІАЛОГІВ
 @router.get("/chat/conversations")
 def get_conversations(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     all_messages = db.query(Message).filter(
@@ -57,7 +55,6 @@ def get_conversations(db: Session = Depends(get_db), current_user: User = Depend
         if partner_id not in latest_messages_dict:
             latest_messages_dict[partner_id] = msg
 
-    # Витягуємо список тих, кого заблокував поточний юзер, і тих, хто заблокував його
     blocked_by_me = {
         int(c.text.split(":")[-1]) for c in db.query(Complaint).filter(
             Complaint.author_id == current_user.id, 
@@ -71,8 +68,6 @@ def get_conversations(db: Session = Depends(get_db), current_user: User = Depend
         
         if partner:
             partner_name = partner.name if partner.role == "organization" else f"{partner.name} {partner.surname or ''}".strip()
-            
-            # Перевіряємо, чи заблокований цей діалог взагалі
             is_muted = partner_id in blocked_by_me
             
             conversations.append({
@@ -81,7 +76,8 @@ def get_conversations(db: Session = Depends(get_db), current_user: User = Depend
                 "last_message": "🚫 Ви заблокували цього користувача" if is_muted else msg.text,
                 "last_message_time": msg.created_at.isoformat(),
                 "unread_count": 0,
-                "is_blocked": is_muted # Передаємо прапорець на фронтенд для зміни кнопок
+                "is_blocked": is_muted, 
+                "is_trusted": partner.is_trusted 
             })
 
     return conversations
@@ -102,7 +98,7 @@ def get_chat_history(
     return messages
 
 
-# --- МАГІЯ WEBSOCKETS ---
+# --- WEBSOCKETS CONNECTION MANAGER ---
 
 class ConnectionManager:
     def __init__(self):
@@ -119,15 +115,19 @@ class ConnectionManager:
         await self.broadcast_online_status()
 
     async def broadcast_online_status(self):
-        online_users = list(self.active_connections.keys())
-        for connection in self.active_connections.values():
-            try:
-                await connection.send_json({
-                    "type": "online_status",
-                    "users": online_users
-                })
-            except Exception:
-                pass
+        db = SessionLocal()
+        try:
+            online_users = list(self.active_connections.keys())
+            for conn_id, connection in self.active_connections.items():
+                try:
+                    await connection.send_json({
+                        "type": "online_status",
+                        "users": online_users
+                    })
+                except Exception:
+                    pass
+        finally:
+            db.close()
 
     async def send_personal_message(self, message_data: dict, receiver_id: int):
         if receiver_id in self.active_connections:
@@ -143,16 +143,6 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-@contextmanager
-def get_websocket_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-# Маршрут WebSocket-труби
 @router.websocket("/chat/ws")
 async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     email = decode_access_token(token)
@@ -160,12 +150,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
         await websocket.close(code=4008)
         return
 
-    with get_websocket_db() as db:
+    db = SessionLocal()
+    try:
         user = db.query(User).filter(User.email == email).first()
         if not user:
             await websocket.close(code=4008)
             return
         user_id = user.id
+    finally:
+        db.close()
 
     await manager.connect(websocket, user_id)
     
@@ -180,8 +173,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
             if not text or not receiver_id:
                 continue
 
-            with get_websocket_db() as db:
-                # 💡 НАДЗВЕЧАЙНО ВАЖЛИВО: Перевірка на двостороннє блокування перед записом та відправкою
+            db = SessionLocal()
+            try:
                 is_blocked = db.query(Complaint).filter(
                     or_(
                         (Complaint.author_id == user_id) & (Complaint.text == f"[BLOCKED] user_id:{receiver_id}"),
@@ -190,26 +183,32 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 ).first()
 
                 if is_blocked:
-                    # Повертаємо івент помилки клієнту в WebSocket трубу
                     if user_id in manager.active_connections:
                         await manager.active_connections[user_id].send_json({
                             "type": "blocked_error",
                             "message": "Неможливо надіслати повідомлення. Користувач знаходиться в чорному списку. 🚫"
                         })
-                    continue # Пропускаємо збереження і розсилку
+                    continue 
 
                 new_message = Message(sender_id=user_id, receiver_id=receiver_id, text=text)
                 db.add(new_message)
                 db.commit()
                 db.refresh(new_message)
                 
+                # 💡 ВИПРАВЛЕНО: Додаємо прапорець довіри партнера безпосередньо у WebSocket повідомлення, 
+                # щоб фронтенд миттєво підтягував статус довіри у шапку та стейти
+                partner_user = db.query(User).filter(User.id == receiver_id).first()
+                
                 response_data = {
                     "id": new_message.id,
                     "sender_id": user_id,
                     "receiver_id": receiver_id,
                     "text": text,
-                    "created_at": new_message.created_at.isoformat()
+                    "created_at": new_message.created_at.isoformat(),
+                    "is_trusted": partner_user.is_trusted if partner_user else False
                 }
+            finally:
+                db.close()
 
             await manager.send_personal_message(response_data, receiver_id)
             await manager.send_personal_message(response_data, user_id)

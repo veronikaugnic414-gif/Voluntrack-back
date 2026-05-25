@@ -88,13 +88,14 @@ class UserResponse(UserBase):
     class Config:
         from_attributes = True
 
-# Схема для передачі автора всередині поста
+# СХЕМА: Для передачі автора всередині поста
 class PostOwnerFields(BaseModel):
     id: int
     name: Optional[str] = None
     surname: Optional[str] = None
     role: str
     avatar_url: Optional[str] = None
+    is_trusted: bool # 💡 ВИПРАВЛЕНО: Додано поле довіри, щоб фронтенд бачив його у стрічці
 
     class Config:
         from_attributes = True
@@ -134,10 +135,9 @@ class PostResponse(PostBase):
     location: Optional[str] = None
     report_text: Optional[str] = None
     report_media_urls: Optional[List[str]] = []
-    # 💡 ВИПРАВЛЕНО: Додано валідацію для посилання на завантажений фото/відео звіт
     report_file_url: Optional[str] = None  
     owner: Optional[PostOwnerFields] = None
-    is_following: Optional[bool] = False # Динамічний прапорець підписки для стрічки
+    is_following: Optional[bool] = False 
 
     class Config:
         from_attributes = True
@@ -156,6 +156,7 @@ class CommentAuthorSchema(BaseModel):
     surname: Optional[str] = None
     role: str
     avatar_url: Optional[str] = None
+    is_trusted: bool # 💡 ВИПРАВЛЕНО: Щоб галочка відображалася і в блоці коментарів
 
     class Config:
         from_attributes = True
@@ -166,7 +167,7 @@ class CommentResponse(BaseModel):
     created_at: datetime
     post_id: int
     author_id: int
-    parent_id: Optional[int] = None # Поле ієрархії для дерева відповідей
+    parent_id: Optional[int] = None 
     author: Optional[CommentAuthorSchema] = None 
 
     class Config:
@@ -189,7 +190,7 @@ class ComplaintResponse(BaseModel):
 class MessageResponse(BaseModel):
     id: int
     sender_id: int
-    running_id: Optional[int] = None # Сумісність для обробників
+    running_id: Optional[int] = None 
     receiver_id: int
     text: str
     created_at: datetime
@@ -208,7 +209,6 @@ class NotificationResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# СХЕМИ: Для валідації та роботи зі збереженими дописами
 class SavedPostCreate(BaseModel):
     post_id: int
 
