@@ -421,3 +421,44 @@ def toggle_follow(user_id: int, db: Session = Depends(get_db), current_user: Use
         db.add(new_sub)
         db.commit()
         return {"message": "Успішно підписано! 🖤", "is_following": True}
+    
+
+    # 💡 НОВИЙ ЕНДПОІНТ: Отримання списку підписок поточного користувача
+@router.get("/users/me/following")
+def get_my_following_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Робимо JOIN між таблицею підписок та таблицею користувачів
+    following_users = db.query(User).join(
+        Subscription, Subscription.followed_id == User.id
+    ).filter(Subscription.follower_id == current_user.id).all()
+    
+    return [
+        {
+            "id": u.id,
+            "name": u.name,
+            "surname": u.surname,
+            "role": u.role,
+            "avatar_url": u.avatar_url,
+            "specialization": u.specialization,
+            "is_trusted": u.is_trusted
+        } for u in following_users
+    ]
+
+
+# 💡 НОВИЙ ЕНДПОІНТ: Отримання списку підписок будь-якого публічного користувача за його ID
+@router.get("/users/{user_id}/following")
+def get_public_user_following(user_id: int, db: Session = Depends(get_db)):
+    following_users = db.query(User).join(
+        Subscription, Subscription.followed_id == User.id
+    ).filter(Subscription.follower_id == user_id).all()
+    
+    return [
+        {
+            "id": u.id,
+            "name": u.name,
+            "surname": u.surname,
+            "role": u.role,
+            "avatar_url": u.avatar_url,
+            "specialization": u.specialization,
+            "is_trusted": u.is_trusted
+        } for u in following_users
+    ]
