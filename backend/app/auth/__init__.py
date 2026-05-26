@@ -2,16 +2,16 @@ import secrets
 import shutil
 import os
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Query
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy import func  
+from sqlalchemy import func, or_ 
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Optional, List
 
 from app.database import get_db
-from app.models import User, Education, Document, Notification, Post, Subscription  
+from app.models import User, Education, Document, Notification, Post, Subscription, VolunteerAffiliation 
 from app.security import decode_access_token, hash_password, verify_password, create_access_token
 from app.mail import send_verification_email, send_reset_email, generate_verification_token
 from app.schemas import UserUpdate, UserResponse, EducationBase, EducationResponse, DocumentResponse
@@ -212,12 +212,16 @@ def verify_email(token: str, db: Session = Depends(get_db)):
     return HTMLResponse(content=success_html)
 
 
-# 💡 ВИПРАВЛЕНО: Дані серіалізуються напряму без response_model обмежень для стабільності
 @router.get("/me")
 def get_profile(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     posts_count = db.query(Post).filter(Post.owner_id == current_user.id).count()
     followers_count = db.query(Subscription).filter(Subscription.followed_id == current_user.id).count()
     total_likes = db.query(func.sum(Post.likes_count)).filter(Post.owner_id == current_user.id).scalar() or 0
+
+    if current_user.role == "organization":
+        partner_users = db.query(User).join(VolunteerAffiliation, VolunteerAffiliation.volunteer_id == User.id).filter(VolunteerAffiliation.organization_id == current_user.id, VolunteerAffiliation.status == "accepted").all()
+    else:
+        partner_users = db.query(User).join(VolunteerAffiliation, VolunteerAffiliation.organization_id == User.id).filter(VolunteerAffiliation.volunteer_id == current_user.id, VolunteerAffiliation.status == "accepted").all()
 
     return {
         "id": current_user.id,
@@ -234,6 +238,17 @@ def get_profile(current_user: User = Depends(get_current_user), db: Session = De
         "is_verified": current_user.is_verified,
         "is_trusted": current_user.is_trusted,
         "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+        "team_members": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "surname": p.surname,
+                "role": p.role,
+                "avatar_url": p.avatar_url,
+                "specialization": p.specialization,
+                "is_trusted": p.is_trusted
+            } for p in partner_users
+        ],
         "educations": [
             {
                 "id": edu.id,
@@ -358,7 +373,6 @@ def delete_document(doc_id: int, db: Session = Depends(get_db), current_user: Us
     return {"message": "Документ видалено"}
 
 
-# 💡 ОТРИМАННЯ ПУБЛІЧНОГО ПРОФІЛЮ ЗІ СТАТИСТИКОЮ ТА ДАТОЮ РЕЄСТРАЦІЇ
 @router.get("/users/{user_id}")
 def get_public_profile(user_id: int, db: Session = Depends(get_db), current_user: Optional[User] = Depends(get_current_user)):
     user = db.query(User).filter(User.id == user_id).first()
@@ -377,6 +391,19 @@ def get_public_profile(user_id: int, db: Session = Depends(get_db), current_user
         ).first()
         is_following = existing_sub is not None
 
+    if user.role == "organization":
+        partner_users = db.query(User).join(VolunteerAffiliation, VolunteerAffiliation.volunteer_id == User.id).filter(VolunteerAffiliation.organization_id == user_id, VolunteerAffiliation.status == "accepted").all()
+    else:
+        partner_users = db.query(User).join(VolunteerAffiliation, VolunteerAffiliation.organization_id == User.id).filter(VolunteerAffiliation.volunteer_id == user_id, VolunteerAffiliation.status == "accepted").all()
+
+    affiliation_status = "none"
+    if current_user:
+        org_id = user_id if user.role == "organization" else current_user.id
+        vol_id = current_user.id if user.role == "organization" else user_id
+        aff = db.query(VolunteerAffiliation).filter_by(organization_id=org_id, volunteer_id=vol_id).first()
+        if aff:
+            affiliation_status = aff.status
+
     return {
         "id": user.id,
         "name": user.name,
@@ -388,7 +415,19 @@ def get_public_profile(user_id: int, db: Session = Depends(get_db), current_user
         "specialization": user.specialization,
         "is_verified": user.is_verified,
         "is_following": is_following,
+        "affiliation_status": affiliation_status,
         "created_at": user.created_at.isoformat() if user.created_at else None,  
+        "team_members": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "surname": p.surname,
+                "role": p.role,
+                "avatar_url": p.avatar_url,
+                "specialization": p.specialization,
+                "is_trusted": p.is_trusted
+            } for p in partner_users
+        ],
         "stats": {
             "posts_count": posts_count,
             "followers_count": followers_count,
@@ -397,7 +436,6 @@ def get_public_profile(user_id: int, db: Session = Depends(get_db), current_user
     }
 
 
-# 💡 КНОПКА ПІДПИСАТИСЯ / ВІДПИСАТИСЯ (TOGGLE)
 @router.post("/users/{user_id}/toggle-follow")
 def toggle_follow(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if user_id == current_user.id:
@@ -421,12 +459,62 @@ def toggle_follow(user_id: int, db: Session = Depends(get_db), current_user: Use
         db.add(new_sub)
         db.commit()
         return {"message": "Успішно підписано! 🖤", "is_following": True}
-    
 
-    # 💡 НОВИЙ ЕНДПОІНТ: Отримання списку підписок поточного користувача
+
+@router.post("/affiliations/toggle/{target_id}")
+def toggle_affiliation(target_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.id == target_id:
+        raise HTTPException(status_code=400, detail="Не можна створювати зв'язок із самим собою")
+        
+    target_user = db.query(User).filter(User.id == target_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Профіль не знайдено")
+
+    roles = [current_user.role, target_user.role]
+    if "volunteer" not in roles or "organization" not in roles:
+        raise HTTPException(status_code=400, detail="Зв'язок можливий лише між Волонтером та Організацією")
+
+    org_id = target_id if target_user.role == "organization" else current_user.id
+    vol_id = current_user.id if target_user.role == "organization" else target_id
+
+    existing = db.query(VolunteerAffiliation).filter_by(organization_id=org_id, volunteer_id=vol_id).first()
+
+    if existing:
+        db.delete(existing)
+        db.commit()
+        return {"message": "Зв'язок чи запит скасовано ✖️", "affiliation_status": "none"}
+    
+    new_aff = VolunteerAffiliation(organization_id=org_id, volunteer_id=vol_id, status="pending")
+    db.add(new_aff)
+    
+    notif_receiver = vol_id if current_user.role == "organization" else org_id
+    notif_msg = f"Користувач {current_user.name} надіслав запит на додавання в команду! Перевірте профіль 🤝"
+    db.add(Notification(user_id=notif_receiver, type="info", message=notif_msg))
+    
+    db.commit()
+    return {"message": "Запит на співпрацю надіслано! Очікуйте підтвердження 🤝", "affiliation_status": "pending"}
+
+
+@router.post("/affiliations/accept/{target_id}")
+def accept_affiliation(target_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    org_id = current_user.id if current_user.role == "organization" else target_id
+    vol_id = target_id if current_user.role == "organization" else current_user.id
+
+    aff = db.query(VolunteerAffiliation).filter_by(organization_id=org_id, volunteer_id=vol_id, status="pending").first()
+    if not aff:
+        raise HTTPException(status_code=404, detail="Запит на співпрацю не знайдено або вже підтверджено")
+
+    aff.status = "accepted"
+    
+    notif_receiver = target_id
+    db.add(Notification(user_id=notif_receiver, type="info", message=f"Ваш запит на командну співпрацю з {current_user.name} успішно підтверджено! 🎉"))
+    
+    db.commit()
+    return {"message": "Співпрацю успішно підтверджено! Партнер доданий у команду 🖤", "affiliation_status": "accepted"}
+
+
 @router.get("/users/me/following")
 def get_my_following_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # Робимо JOIN між таблицею підписок та таблицею користувачів
     following_users = db.query(User).join(
         Subscription, Subscription.followed_id == User.id
     ).filter(Subscription.follower_id == current_user.id).all()
@@ -444,7 +532,6 @@ def get_my_following_users(db: Session = Depends(get_db), current_user: User = D
     ]
 
 
-# 💡 НОВИЙ ЕНДПОІНТ: Отримання списку підписок будь-якого публічного користувача за його ID
 @router.get("/users/{user_id}/following")
 def get_public_user_following(user_id: int, db: Session = Depends(get_db)):
     following_users = db.query(User).join(
@@ -461,4 +548,30 @@ def get_public_user_following(user_id: int, db: Session = Depends(get_db)):
             "specialization": u.specialization,
             "is_trusted": u.is_trusted
         } for u in following_users
+    ]
+
+
+# ─── 💡 НОВИЙ ЕНДПОІНТ (Пункт 12): ДИНАМІЧНИЙ ПОШУК ПАРТНЕРІВ ПО ВСІЙ БАЗІ ДАНИХ ───
+@router.get("/search-partners")
+def search_partners(q: str = Query(""), db: Session = Depends(get_db)):
+    # Завантажуємо виключно активних волонтерів та організації
+    query = db.query(User).filter(
+        User.role.in_(["volunteer", "organization"]),
+        User.is_active == True
+    )
+    
+    # Фільтруємо за текстовим запитом, якщо він переданий з фронтенду
+    if q:
+        query = query.filter(User.name.ilike(f"%{q}%"))
+    
+    partners = query.limit(10).all()
+    
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "surname": p.surname,
+            "role": p.role,
+            "avatar_url": p.avatar_url
+        } for p in partners
     ]

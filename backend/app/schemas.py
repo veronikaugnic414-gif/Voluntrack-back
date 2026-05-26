@@ -54,6 +54,19 @@ class ProfileStatsSchema(BaseModel):
     class Config:
         from_attributes = True
 
+# СХЕМА (Пункт 11): Для безпечної передачі учасників команди на фронтенд
+class TeamMemberSchema(BaseModel):
+    id: int
+    name: Optional[str] = None
+    surname: Optional[str] = None
+    role: str
+    avatar_url: Optional[str] = None
+    specialization: Optional[str] = None
+    is_trusted: bool
+
+    class Config:
+        from_attributes = True
+
 class UserBase(BaseModel):
     email: EmailStr
     role: UserRole = UserRole.user
@@ -84,18 +97,32 @@ class UserResponse(UserBase):
     documents: List[DocumentResponse] = []
     created_at: Optional[datetime] = None 
     stats: Optional[ProfileStatsSchema] = None 
+    team_members: List[TeamMemberSchema] = []
+    affiliation_status: Optional[str] = "none"
 
     class Config:
         from_attributes = True
 
-# СХЕМА: Для передачі автора всередині поста
+# СХЕМА: Для передачі головного автора всередині поста
 class PostOwnerFields(BaseModel):
     id: int
     name: Optional[str] = None
     surname: Optional[str] = None
     role: str
     avatar_url: Optional[str] = None
-    is_trusted: bool # 💡 ВИПРАВЛЕНО: Додано поле довіри, щоб фронтенд бачив його у стрічці
+    is_trusted: bool 
+
+    class Config:
+        from_attributes = True
+
+# 💡 НОВА СХЕМА (Пункт 12): Для відображення підтверджених співавторів колаборації всередині допису
+class PostCoauthorSchema(BaseModel):
+    id: int
+    name: Optional[str] = None
+    surname: Optional[str] = None
+    role: str
+    avatar_url: Optional[str] = None
+    is_trusted: bool
 
     class Config:
         from_attributes = True
@@ -104,11 +131,15 @@ class PostBase(BaseModel):
     title: str
     description: str
     goal_amount: Optional[float] = None
+    post_type: str = "donation"  # "donation", "volunteering", "project"
+    monobank_link: Optional[str] = None
     
 class PostCreate(BaseModel):
     title: str
     description: str
     goal_amount: float
+    post_type: str = "donation"  
+    monobank_link: Optional[str] = None  
     deadline: Optional[datetime] = None
     cover_image_url: Optional[str] = None
     category: Optional[str] = None
@@ -118,6 +149,8 @@ class PostUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     goal_amount: Optional[float] = None
+    raised_amount: Optional[float] = None  
+    monobank_link: Optional[str] = None
     location: Optional[str] = None
     deadline: Optional[datetime] = None
 
@@ -138,6 +171,8 @@ class PostResponse(PostBase):
     report_file_url: Optional[str] = None  
     owner: Optional[PostOwnerFields] = None
     is_following: Optional[bool] = False 
+    # 💡 ДОДАНO (Пункт 12): Масив для серіалізації списку підтверджених співавторів збору
+    coauthors: List[PostCoauthorSchema] = []
 
     class Config:
         from_attributes = True
@@ -156,7 +191,7 @@ class CommentAuthorSchema(BaseModel):
     surname: Optional[str] = None
     role: str
     avatar_url: Optional[str] = None
-    is_trusted: bool # 💡 ВИПРАВЛЕНО: Щоб галочка відображалася і в блоці коментарів
+    is_trusted: bool 
 
     class Config:
         from_attributes = True

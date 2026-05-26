@@ -38,7 +38,7 @@ class Like(Base):
 
     __table_args__ = (UniqueConstraint("user_id", "post_id", name="unique_user_post_like"),)
 
-# 💡 НОВА МОДЕЛЬ: Таблиця збережених дописів (Закладки)
+# Таблиця збережених дописів (Закладки)
 class SavedPost(Base):
     __tablename__ = "saved_posts"
 
@@ -61,6 +61,35 @@ class Subscription(Base):
     followed_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     __table_args__ = (UniqueConstraint("follower_id", "followed_id", name="unique_follower_followed"),)
+
+# Зв'язок у профілях між Організаціями та Волонтерами
+class VolunteerAffiliation(Base):
+    __tablename__ = "volunteer_affiliations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    volunteer_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    status = Column(String, default="pending") 
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("organization_id", "volunteer_id", name="unique_org_volunteer_link"),)
+
+
+# 💡 НОВА МОДЕЛЬ (Пункт 12): Співавтори та коолаборації дописів/зборів (Many-to-Many)
+class PostCoauthor(Base):
+    __tablename__ = "post_coauthors"
+
+    id = Column(Integer, primary_key=True, index=True)
+    post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Статус коолаборації: "pending" (очікує підтвердження), "accepted" (прийнято іншою стороною)
+    status = Column(String, default="pending")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("post_id", "user_id", name="unique_post_coauthor_link"),)
+
 
 class User(Base):
     __tablename__ = "users"
@@ -94,12 +123,14 @@ class User(Base):
     documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")
     likes = relationship("Like", back_populates="user", cascade="all, delete-orphan")
     
-    # 💡 Зв'язок для збережених постів користувача
     saved_posts = relationship("SavedPost", back_populates="user", cascade="all, delete-orphan")
     
-    # Зв'язки для підписок
     followers = relationship("Subscription", foreign_keys=[Subscription.followed_id], cascade="all, delete-orphan")
     following = relationship("Subscription", foreign_keys=[Subscription.follower_id], cascade="all, delete-orphan")
+    
+    # 💡 ДОДАНO: Обернений зв'язок для коолаборацій користувача (в яких спільних зборах бере участь)
+    shared_posts = relationship("PostCoauthor", back_populates="user", cascade="all, delete-orphan")
+
 
 class Post(Base):
     __tablename__ = "posts"
@@ -110,8 +141,11 @@ class Post(Base):
     category = Column(String, nullable=True)
     location = Column(String, nullable=True)
     
-    goal_amount = Column(Float, default=0.0)
-    raised_amount = Column(Float, default=0.0)
+    post_type = Column(String, default="donation")  # "donation" (збір), "volunteering" (волонтерство), "project" (проєкт)
+    monobank_link = Column(String, nullable=True)   # Посилання на банку Monobank або Приват
+    
+    goal_amount = Column(Float, default=0.0)        # Цільова сума збору
+    raised_amount = Column(Float, default=0.0)      # Скільки вже зібрано (коригується вручную з фронтенду)
     donors_count = Column(Integer, default=0)
     
     status = Column(String, default="active")
@@ -132,8 +166,16 @@ class Post(Base):
     complaints = relationship("Complaint", back_populates="post", cascade="all, delete-orphan")
     likes_relationship = relationship("Like", back_populates="post", cascade="all, delete-orphan")
     
-    # 💡 Зв'язок, щоб бачити, які користувачі зберегли цей допис
     saved_by_users = relationship("SavedPost", back_populates="post", cascade="all, delete-orphan")
+    
+    # 💡 ДОДАНO: Зв'язок для отримання списку запрошених/підтверджених співавторів цього допису
+    coauthors = relationship("PostCoauthor", back_populates="post", cascade="all, delete-orphan")
+
+
+# 💡 НАЛАШТУВАННЯ ORM РЕЛЕЙШНІВ ДЛЯ ПРОМІЖНОЇ МОДЕЛІ СПІВАВТОРСТВА
+PostCoauthor.user = relationship("User", back_populates="shared_posts")
+PostCoauthor.post = relationship("Post", back_populates="coauthors")
+
 
 class Comment(Base):
     __tablename__ = "comments"
@@ -162,6 +204,7 @@ class Comment(Base):
         remote_side=[id]
     )
 
+
 class Complaint(Base):
     __tablename__ = "complaints"
 
@@ -174,6 +217,7 @@ class Complaint(Base):
 
     post = relationship("Post", back_populates="complaints")
 
+
 class Notification(Base):
     __tablename__ = "notifications"
 
@@ -183,6 +227,7 @@ class Notification(Base):
     message = Column(String, nullable=False)
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class Message(Base):
     __tablename__ = "messages"
