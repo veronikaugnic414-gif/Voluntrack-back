@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, Text, ForeignKey, DateTime, JSON, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Boolean, Text, ForeignKey, DateTime, JSON, UniqueConstraint, and_
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -76,7 +76,7 @@ class VolunteerAffiliation(Base):
     __table_args__ = (UniqueConstraint("organization_id", "volunteer_id", name="unique_org_volunteer_link"),)
 
 
-# 💡 НОВА МОДЕЛЬ (Пункт 12): Співавтори та коолаборації дописів/зборів (Many-to-Many)
+# Таблиця-лінк: Проміжна модель співавторства Many-to-Many
 class PostCoauthor(Base):
     __tablename__ = "post_coauthors"
 
@@ -84,7 +84,6 @@ class PostCoauthor(Base):
     post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     
-    # Статус коолаборації: "pending" (очікує підтвердження), "accepted" (прийнято іншою стороною)
     status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -127,9 +126,6 @@ class User(Base):
     
     followers = relationship("Subscription", foreign_keys=[Subscription.followed_id], cascade="all, delete-orphan")
     following = relationship("Subscription", foreign_keys=[Subscription.follower_id], cascade="all, delete-orphan")
-    
-    # 💡 ДОДАНO: Обернений зв'язок для коолаборацій користувача (в яких спільних зборах бере участь)
-    shared_posts = relationship("PostCoauthor", back_populates="user", cascade="all, delete-orphan")
 
 
 class Post(Base):
@@ -141,11 +137,11 @@ class Post(Base):
     category = Column(String, nullable=True)
     location = Column(String, nullable=True)
     
-    post_type = Column(String, default="donation")  # "donation" (збір), "volunteering" (волонтерство), "project" (проєкт)
-    monobank_link = Column(String, nullable=True)   # Посилання на банку Monobank або Приват
+    post_type = Column(String, default="donation")  
+    monobank_link = Column(String, nullable=True)   
     
-    goal_amount = Column(Float, default=0.0)        # Цільова сума збору
-    raised_amount = Column(Float, default=0.0)      # Скільки вже зібрано (коригується вручную з фронтенду)
+    goal_amount = Column(Float, default=0.0)        
+    raised_amount = Column(Float, default=0.0)      
     donors_count = Column(Integer, default=0)
     
     status = Column(String, default="active")
@@ -168,13 +164,15 @@ class Post(Base):
     
     saved_by_users = relationship("SavedPost", back_populates="post", cascade="all, delete-orphan")
     
-    # 💡 ДОДАНO: Зв'язок для отримання списку запрошених/підтверджених співавторів цього допису
-    coauthors = relationship("PostCoauthor", back_populates="post", cascade="all, delete-orphan")
-
-
-# 💡 НАЛАШТУВАННЯ ORM РЕЛЕЙШНІВ ДЛЯ ПРОМІЖНОЇ МОДЕЛІ СПІВАВТОРСТВА
-PostCoauthor.user = relationship("User", back_populates="shared_posts")
-PostCoauthor.post = relationship("Post", back_populates="coauthors")
+    # 💡 ВИПРАВЛЕНО (Пункт 12): Прибираємо жорстку фільтрацію за 'accepted' для відображення картки.
+    # Це гарантує, що колаборація з'явиться в стрічці МИТТЄВО відразу після створення допису (і в pending, і в accepted).
+    coauthors = relationship(
+        "User",
+        secondary="post_coauthors",
+        primaryjoin="Post.id == PostCoauthor.post_id",
+        secondaryjoin="User.id == PostCoauthor.user_id",
+        viewonly=True
+    )
 
 
 class Comment(Base):

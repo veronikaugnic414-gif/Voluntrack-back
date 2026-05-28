@@ -28,9 +28,9 @@ async def create_post(
     request: Request, 
     title: str = Form(...),
     description: str = Form(...),
-    goal_amount: float = Form(0.0), # Робимо дефолтним, бо для волонтерства/проєктів ціль може бути 0
-    post_type: str = Form("donation"), # 💡 "donation" (збір), "volunteering" або "project"
-    monobank_link: Optional[str] = Form(None), # Посилання на банку Монобанк/Приват
+    goal_amount: float = Form(0.0), 
+    post_type: str = Form("donation"), 
+    monobank_link: Optional[str] = Form(None), 
     deadline: Optional[datetime] = Form(None),
     category: Optional[str] = Form(None),
     location: Optional[str] = Form(None),
@@ -80,16 +80,15 @@ def get_posts(
     search: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     location: Optional[str] = Query(None),
-    owner_id: Optional[int] = Query(None), # Фільтрація дописів по конкретному юзеру для Profile.js
+    owner_id: Optional[int] = Query(None), 
     current_user: Optional[User] = Depends(get_current_user)
 ):
+    # 💡 ВИПРАВЛЕНО: Додано joinedload(Post.coauthors) для автоматичного підтягування об'єктів User-співавторів у схему відповіді
     if (current_user and current_user.role in ["volunteer", "organization"]) or search:
-        query = db.query(Post).options(joinedload(Post.owner))
+        query = db.query(Post).options(joinedload(Post.owner), joinedload(Post.coauthors))
     else:
-        query = db.query(Post).options(joinedload(Post.owner)).filter(Post.status == "active")
+        query = db.query(Post).options(joinedload(Post.owner), joinedload(Post.coauthors)).filter(Post.status == "active")
     
-    # 💡 ВИПРАВЛЕНО (Пункт 12): Спільні збори. Якщо передано owner_id для профілю — дістаємо 
-    # дописи, де людина є або головним власником, або підтвердженим співавтором коолаборації
     if owner_id:
         query = query.outerjoin(PostCoauthor, PostCoauthor.post_id == Post.id).filter(
             or_(
@@ -127,7 +126,8 @@ def get_saved_posts(db: Session = Depends(get_db), current_user: User = Depends(
     saved_relations = db.query(SavedPost).filter(SavedPost.user_id == current_user.id).all()
     post_ids = [sr.post_id for sr in saved_relations]
     
-    posts = db.query(Post).options(joinedload(Post.owner)).filter(Post.id.in_(post_ids)).all()
+    # 💡 ВИПРАВЛЕНО: Додано joinedload(Post.coauthors) також і для збережених дописів
+    posts = db.query(Post).options(joinedload(Post.owner), joinedload(Post.coauthors)).filter(Post.id.in_(post_ids)).all()
     
     for post in posts:
         post.is_saved = True
@@ -152,13 +152,14 @@ def toggle_save_post(post_id: int, db: Session = Depends(get_db), current_user: 
 # 3. ОТРИМАННЯ ОДНОГО ДОПИСУ ЗА ID
 @router.get("/{post_id}", response_model=PostResponse)
 def get_single_post(post_id: int, db: Session = Depends(get_db)):
-    post = db.query(Post).options(joinedload(Post.owner)).filter(Post.id == post_id).first()
+    # 💡 ВИПРАВЛЕНО: Додано joinedload(Post.coauthors) для детальної сторінки одного поста
+    post = db.query(Post).options(joinedload(Post.owner), joinedload(Post.coauthors)).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Допис не знайдено")
     return post
 
 
-# 4. РЕДАГУВАННЯ ДОПИСУ (З ручним оновленням суми прогресу raised_amount)
+# 4. РЕДАГУВАННЯ ДОПИСУ
 @router.patch("/{post_id}", response_model=PostResponse)
 def edit_post(
     post_id: int,
@@ -368,7 +369,7 @@ def report_post(
     return new_complaint
 
 
-# ─── 💡 НОВІ ЕНДПОІНТИ (Пункт 12): КЕРУВАННЯ СПІЛЬНИМИ ЗБОРАМИ (КООЛАБОРАЦІЇ) ───
+# ─── 💡 КЕРУВАННЯ СПІЛЬНИМИ ЗБОРАМИ (КООЛАБОРАЦІЇ) ───
 
 # ЗАПРОСИТИ ПАРТНЕРА СТАТИ СПІВАВТОРОМ ЗБОРУ
 @router.post("/{post_id}/share-with/{partner_id}")
@@ -385,11 +386,9 @@ def invite_coauthor(post_id: int, partner_id: int, db: Session = Depends(get_db)
     if existing:
         return {"message": "Партнер уже запрошений або підтвердив участь у цьому зборі"}
 
-    # Створюємо запит на колаборацію
     new_collaboration = PostCoauthor(post_id=post_id, user_id=partner_id, status="pending")
     db.add(new_collaboration)
     
-    # Надсилаємо сповіщення партнеру на платформі
     author_name = current_user.name if current_user.role == "organization" else f"{current_user.name} {current_user.surname or ''}".strip()
     db.add(Notification(
         user_id=partner_id,
@@ -410,7 +409,6 @@ def accept_collaboration(post_id: int, db: Session = Depends(get_db), current_us
 
     link.status = "accepted"
     
-    # Сповіщаємо головного автора про успіх
     post = db.query(Post).filter(Post.id == post_id).first()
     partner_name = current_user.name if current_user.role == "organization" else f"{current_user.name} {current_user.surname or ''}".strip()
     db.add(Notification(
