@@ -9,3 +9,4 @@ python-multipart
 websockets
 fastapi-mail
 python-dotenv
+slowapi
